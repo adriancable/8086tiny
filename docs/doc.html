@@ -1,0 +1,304 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>8086tiny: a tiny PC emulator/virtual machine - Documentation</title>
+<meta name="keywords" content="free 8086 pc emulator" />
+<link href="8086tiny.css" rel="stylesheet" type="text/css" />
+</head>
+<body>
+<!--
+This is a free CSS template provided by templatemo.com
+-->
+<div id="templatemo_container_wrapper">
+	<div class="templatemo_spacer"></div>
+<div id="templatemo_container">
+<div id="templatemo_top">
+<b>8086tiny</b> · Documentation
+</div>
+  <div id="templatemo_header">
+        <img src="images/logo.gif" width=780 align=middle>
+  </div>
+  
+<div id="templatemo_left_column">
+<div class="text_area" align="justify">
+
+<div class="title">Documentation</div>
+
+<p>8086tiny is a tiny, open source, portable Intel PC emulator/VM, powerful enough to run DOS, Windows 3.0, Excel, MS Flight Simulator, AutoCAD, Lotus 1-2-3, and similar applications. 8086tiny emulates a "late 90's era" PC XT-type machine with the following specification:</p>
+
+<ul>
+<li>Intel 8086/186 CPU</li>
+<li>1MB RAM</li>
+<li>3.5" floppy disk controller (1.44MB/720KB)</li>
+<li>Fixed disk controller (supports a single hard drive up to 528MB)</li>
+<li>Hercules graphics card with 720x348 2-color graphics (64KB video RAM), and CGA 80x25 16-color text mode support</li>
+<li>Skeleton support for programmable interval timer (PIT) and programmable interrupt controller (PIC)</li>
+<li>Keyboard controller with 83-key XT-style keyboard</li>
+<li>Real-time clock</li>
+</ul>
+  
+<p>The emulator uses the SDL graphics library for portability, and compiles under a range of platforms (Windows, Mac OS X, Linux, Android, iOS).</p>
+<p>While 8086tiny as supplied implements only the 8086 instruction set, it can be extended to more complex, modern instruction sets with relative ease.</p>
+
+  <div class="section_box2" align="justify">
+	        <div class="post_title">Build Instructions</div>
+        	<div class="text_area">
+            <p>
+              The 8086tiny distribution includes a Makefile that will compile unchanged under most UNIX platforms. The 8086tiny source also compiles unchanged under Microsoft Visual Studio C/C++.
+              </p>
+            <p>
+              The Makefile as supplied compiles the full 8086tiny distribution, which includes Hercules graphics support via SDL. If your platform lacks SDL and/or you do not need support for graphics-mode applications,
+              you can compile with <code>-DNO_GRAPHICS</code>.
+              </p>
+        	</div>
+  </div>
+
+  <div class="section_box2" align="justify">
+	        <div class="post_title">Usage</div>
+        	<div class="text_area">
+            <p><code>./8086tiny bios-image-file floppy-image-file [harddisk-image-file]</code></p>
+
+            <p>Under UNIXes, the keyboard must be set to raw mode using <code>stty</code> for the emulator to run. The distribution includes a script called <code>runme</code> which sets the keyboard mode appropriately and runs the emulator with floppy and/or hard disk images as appropriate:</p>
+            <code>
+              #!/bin/sh<br>
+              clear<br>
+              stty cbreak raw -echo min 0<br>
+              if [ -f hd.img ]<br>
+              then<br>
+              &nbsp;&nbsp;./8086tiny bios fd.img hd.img<br>
+              else<br>
+              &nbsp;&nbsp;./8086tiny bios fd.img<br>
+              fi<br>
+              stty cooked echo
+            </code>
+        	</div>
+  </div>
+
+  <div class="section_box2" align="justify">
+	        <div class="post_title">Building a Hard Disk Image</div>
+        	<div class="text_area">
+            <p>
+              To create a hard disk image for use with the emulator, start by generating a flat file called, for example, <code>hd.img</code> of the required size (under 528MB), filled with zero bytes, made using <code>mkfile</code> or a similar tool.
+            </p>
+            <p>
+              Preparing the hard disk image for use in the emulator under DOS is done just like a real PC:
+              <ul>
+                <li>Boot the emulator, and use FDISK to partition the hard disk. When it's done FDISK will reboot the emulator.</li>
+                <li>Use FORMAT C: to format the disk image, and you are done.</li>
+                </ul>
+              <p>The resulting disk image is in the right format to be mounted on a real Windows PC using e.g. OSFMount, on a Mac using hdiutil, or on Linux using mount, providing an easy way to copy files and programs to and from the disk image. Or, you can install programs from within the emulator itself using regular floppy disk images (see "Floppy Drive Emulation" below).
+            </p>
+        	</div>
+  </div>
+  
+    <div class="section_box2" align="justify">
+	        <div class="post_title">Keyboard Support</div>
+        	<div class="text_area">
+            <p>
+              The emulator simulates an XT-style keyboard controlled by an Intel 8042 chip on I/O port 0x60, generating interrupt 9 on each keypress. Because a real 8042 returns scan codes rather than the ASCII characters, for portability, the emulator BIOS does the reverse of a real PC BIOS and converts ASCII characters to scancodes, simulating press/release of the modifier keys (e.g. shift) as necessary to work like a "real" keyboard. The OS (DOS/Windows) then converts them back to ASCII characters and normally this process works seamlessly.
+            </p><p>
+            <p>
+              The scan code table in the BIOS maps your local keyboard layout onto scan codes matching a US-layout QWERTY keyboard. If you are using an international keyboard layout everything will work fine with no changes, provided "United States 83-key XT keyboard" or similar is selected if your OS (e.g. Windows 3.0) gives the option.
+            </p><p>
+              There are special key sequences to get Alt+xxx and Fxxx keys.
+            </p><p>
+              To send an Alt+XXX key combination, press Ctrl+A then the key, so for example to type Alt+F, press Ctrl+A then F.
+            </p><p>
+              To send an Fxx key, press Ctrl+F then a number key. For example, to get the F4 key, press Ctrl+F then 4. To get F10, press Ctrl+F then 0.
+            </p><p>
+              To send a Page Down key, press Ctrl+F then O. To send a Page Up key, press Ctrl+F then E.
+            </p>
+        	</div>
+  </div>
+
+      <div class="section_box2" align="justify">
+	        <div class="post_title">Floppy Drive Emulation</div>
+        	<div class="text_area">
+            <p>
+              Emulates a 3.5" high-density floppy drive. Can read, write and format 1.44MB disks (18 sectors per track, 2 heads) and 720KB disks (9 sectors per track, 2 heads).
+            </p><p>
+              If you want to install your own software from a set of multiple floppy images (downloaded from e.g. <a href="http://www.vetusware.com">Vetusware</a>), the easiest way to "change disks" is to copy each disk image in turn over the floppy image file you specify on the command line. Don't forget to put your original boot disk back at the end!
+            </p>
+        	</div>
+  </div>
+
+    <div class="section_box2" align="justify">
+	        <div class="post_title">Hard Drive Emulation</div>
+        	<div class="text_area">
+            <p>
+              Supports up to 1023 cylinders, 63 sectors per track, 63 heads for disks up to 528MB.
+            </p><p>
+              Disk image format used is a subset of the standard "raw" format used by most disk image mount tools. In general, disk images prepared by the emulator will work with disk image tools and other emulators, but not the other way around.
+            </p><p>
+              The emulator uses an overly simplistic algorithm to derive a simulated cylinder/sector/head geometry from the disk image file's size. This algorithm often results in not all the space in the image file being available for disk partitions. For example, creating a 40,000,000 byte image file results in DOS FDISK seeing only 31.9MB as the volume size.
+            </p><p>
+              Note that unlike a real PC, the emulator cannot boot from a hard disk (image). Therefore, you will always need to use a bootable floppy image, even if after boot everything runs from the HD.
+            </p>
+        	</div>
+  </div>
+
+    <div class="section_box2" align="justify">
+	        <div class="post_title">Text Mode Support</div>
+        	<div class="text_area">
+            <p>
+              The emulator supports both text output via the standard BIOS interrupt 0x10 interface, and also direct video memory access (one page, 4KB video RAM at segment B800) in 80x25 CGA 16-color text mode.
+            </p><p>
+              BIOS text output calls are converted to simple writes to stdout. Direct video memory accesses for the 80x25 CGA color text mode are converted to ANSI terminal escape sequences. If you are using a terminal which does not support ANSI (e.g. you are compiling the emulator with MS VC++ and running in a Windows console window) then PC applications that directly write to video memory in text mode may be unusable.
+            </p><p>
+              Most CGA I/O ports are not supported except for the CGA refresh register at 0x3DA, which some applications use for timing or synchronisation.
+            </p><p>
+              The regular PC character code page (437) includes various extended ASCII characters for things like line drawing. You might want to set the font in your terminal program to something that includes these (for example, on Mac OS X there is a suitable freeware font called Perfect DOS VGA 437).
+            </p><p>
+              Occasionally a DOS application on exit will leave the video hardware in an odd state which confuses the emulator, resulting in subsequent text output being invisible. If this happens, just use the DOS CLS command to clear the screen and all will be well again.
+            </p>
+        	</div>
+  </div>
+
+    <div class="section_box2" align="justify">
+	        <div class="post_title">Graphics Mode Support</div>
+        	<div class="text_area">
+            <p>
+              Hercules 720x348 monochrome graphics mode emulation is implemented using SDL. Most Hercules features are supported via the normal I/O interface on ports 0x3B8 and 0x3BA including video memory bank switching (segments B000/B800), which some games use for double-buffered graphics. CGA graphics modes are not supported.
+            </p><p>
+              When an application enters graphics mode, the emulator will open an SDL window (which will be closed when the application goes back to text mode). To keep the code size down, the emulator as it stands does not include code to redirect keystrokes from the SDL window to the main terminal window. Therefore, the main terminal window must remain in focus when an SDL graphics window is open.
+            </p><p>
+              On UNIXes, SDL will automatically output graphics via X11 if the DISPLAY environment variable is set up.
+            </p><p>
+              Some applications (e.g. AutoCAD) support a PC configuration with a CGA card and a Hercules card, for simultaneous text and graphics output on different displays. The emulator simulates this configuration, too, using separate windows for the (terminal) text and (SDL) graphics displays.
+            </p><p>
+              If your application only requires text mode, you can compile 8086tiny without SDL by defining <code>NO_GRAPHICS</code>.
+            </p>
+        	</div>
+  </div>
+
+      <div class="section_box2" align="justify">
+	        <div class="post_title">Real-Time Clock Support</div>
+        	<div class="text_area">
+            <p>
+              Reading the RTC (both time and date) is emulated via the standard BIOS clock interface, pulling the time/date from the host computer. Setting the time or date is not supported.
+            </p>
+        	</div>
+  </div>
+
+      <div class="section_box2" align="justify">
+	        <div class="post_title">Hardware Timer Support</div>
+        	<div class="text_area">
+            <p>
+              A countdown timer on I/O port 0x40 is simulated in an overly simplistic way which is good enough for most software. On a real PC this has a default period of 55ms and is programmable. No programmability is supported in the emulator and the period may be about right or completely wrong depending on the actual speed of your computer.
+            </p><p>
+              On a real PC, interrupt 8 is fired every 55ms. The emulator tries to do the same but again, the delay period is uncalibrated.
+            </p>
+        	</div>
+  </div>
+
+    <div class="section_box2" align="justify">
+	        <div class="post_title">BIOS</div>
+        	<div class="text_area">
+            <p></p>
+              Like a real PC, the emulator needs a BIOS to implement boot functionality and the standard interrupt interfaces. The 8086tiny BIOS was written from scratch using documentation in the public domain. It is around 9KB in size and assembles using NASM. Full source code and a pre-built binary are provided.
+            <p></p>
+              The BIOS binary comprises a code section and a data section. The code section implements the standard interrupt interfaces for video, disk, timer, clock and so on, much as a "real" PC BIOS does, and also a small timer-controlled video driver to convert video memory formatting into ANSI escape sequences when the emulator is in text mode.
+              The data section includes typical BIOS structures like a scan code table and the BIOS data area, but also a number of look-up tables to assist the emulator with instruction decoding. Full detail is provided in the CPU section below.
+            </p>
+        	</div>
+  </div>
+
+      <div class="section_box2" align="justify">
+	        <div class="post_title">Memory Map and Register Emulation</div>
+        	<div class="text_area">
+            <p>
+              The emulator simulates a hardware configuration with A20 address line wraparound disabled, making just over 1MB of RAM available to applications.
+            </p><p>
+              Memory map is largely as per a real PC, with interrupt vector table at 0:0, BIOS data area including keyboard buffer at <code>40:0</code>, CGA text video memory at <code>B800:0</code>, Hercules dual-bank graphics memory at <code>B000</code>/<code>B800:0</code>, and BIOS at <code>F000:100</code>. Unlike a real PC, in the emulator the CPU registers are memory-mapped (at <code>F000:0</code>), which enables considerable optimisation of the emulator's instruction execution unit by permitting the unification of memory and register operations, while remaining invisible to the running software.
+            </p>
+        	</div>
+  </div>
+
+  <div class="section_box2" align="justify">
+	        <div class="post_title">CPU, Memory and Register Emulation</div>
+        	<div class="text_area">
+            <p>
+              CPU supports the full 8086 instruction set (plus some 80186 extensions), including undocumented instructions (e.g. <code>SALC</code>) and flag behaviors (e.g. <code>MUL</code>/<code>DIV</code>), opcode bugs which some applications rely on (e.g. <code>PUSH SP</code>), and the trap flag for debugger support.
+            </p><p>
+              The focus of 8086tiny is on minimizing code size without comproming emulation accuracy. Due to the complexities of the highly irregular Intel x86 instruction format, instruction decoding is assisted by a number of lookup tables which form part of the BIOS binary. For example, there are many different ways to encode a <code>MOV</code> instruction, depending on the types of the source and destination operands (immediate, register, or memory). There are sometimes even multiple ways to encode the same instruction (e.g. <code>MOV AX, [1234]</code> usually encodes as <code>A1 34 12</code> but can also encode as <code>8B 06 34 12</code>). To avoid having to implement similar functionality in the emulator multiple times for each instruction or encoding variant, look-up tables are used to map each instruction to an internal function and subfunction number.
+            </p><p>
+              As an example, we illustrate how the emulator executes the instruction <code>ADD AX, BX</code>, which encodes as hex <code>01 D8</code>.
+              </p>
+              <ul>
+                <li>The emulator begins by retrieving index <code>01</code> (the first byte of the instruction) from <code>TABLE_OPCODE_LOOKUP</code>, giving an <i>opcode lookup ID</i> of decimal 17, which corresponds to the Intel instruction template <code>ADD reg, r/m</code>.</li>
+                <li>Next, index 17 decimal is retrieved from <code>TABLE_XLAT_OPCODE</code> and <code>TABLE_XLAT_SUBFUNCTION</code>, giving a <i>translated opcode ID</i> of 9 decimal and a <i>subfunction ID</i> of 0, respectively.</li>
+                <li>The <code>NEXT_OPCODE</code>/<code>NEXT_OPCODE_SUBFUNCTION</code> chain in the source uses the <i>translated opcode ID</i> and <i>subfunction ID</i> to determine the operation to execute, in this case calling the <code>OP(+=)</code> macro followed by <code>set_CF()</code> to set the carry flag in accordance with the result of the addition.</li>
+                <li>Next, instruction length is computed. Because Intel x86 instructions are of arbitrary length (and, sometimes, multiple encodings of the same instruction can have different lengths), tables are used to determine the instruction length to move IP to the next instruction. The <i>opcode lookup ID</i> is used as an index into <code>TABLE_BASE_INST_SIZE</code>, <code>TABLE_I_MOD_SIZE</code>, and <code>TABLE_I_W_SIZE</code> and these numbers are added to compute the total instruction length.</li>
+                <li>Finally, flags are set. This is done in several stages.
+                <ul>
+                <li>The <i>opcode lookup ID</i> (decimal 17) is used as an index into <code>TABLE_STD_FLAGS_ARITH</code> to give 1, signifying that this instruction sets the auxiliary and overflow flags as standard for arithmetic operations.</li>
+                <li>Next, the <i>opcode lookup ID</i> (decimal 17) is used as an index into <code>TABLE_STD_FLAGS_LOGIC</code> to give 0, signifying no operation. If this table entry were 1, the overflow and carry flags would be set to 0, as standard for logic operations.</li>
+                <li>Finally, the <i>opcode lookup ID</i> (decimal 17) is used as an index into <code>TABLE_STD_FLAGS_SZP</code> to give 1, signifying that this instruction sets the sign, zero and parity flags according to the operation's result in the standard way. Sign and zero flags are set directly from the result, and the parity flag is set by looking up the result in <code>TABLE_PARITY_FLAG</code>.</li>
+                </ul></li>
+              </ul>
+
+              <p>The CPU also implements some "special" two-byte opcodes to help the emulator talk with the outside world. These are:
+              </p><ul>
+	              <li><code>0F 00</code> (<code>PUTCHAR_AL</code>) - output character in register <code>AL</code> to terminal</li>
+	              <li><code>0F 01</code> (<code>GET_RTC</code>) - write real-time clock data (as returned by <code>localtime</code>) to memory location <code>ES:BX</code></li>
+	              <li><code>0F 02</code> (<code>READ_DISK</code>) - read <code>AX</code> bytes from disk at offset <code>512*(16*SI+BP)</code> into memory location ES:BX. Disk is specified in <code>DL</code> (0 = hard disk, 1 = floppy disk)</li>
+	              <li><code>0F 03</code> (<code>WRITE_DISK</code>) - write <code>AX</code> bytes at memory location <code>ES:BX</code> to disk at offset <code>512*(16*SI+BP)</code>. Disk is specified in <code>DL</code> as per <code>0F 02</code></li>
+                </ul>
+
+              <p>Emulator exit is triggered by a <code>JMP 0:0</code> instruction, to allow the user to easily quit the emulator without shutting down the terminal.</p>
+              <p>Extension of the instruction set supported by 8086tiny can be implemented by appropriate modification to the tables described above in the BIOS source, and addition of a corresponding new <code>NEXT_OPCODE</code> block in the C source.</p>
+            </p>
+        	</div>
+  </div>
+
+      <div class="section_box2" align="justify">
+	        <div class="post_title">Supported Application Software</div>
+        	<div class="text_area">
+            <p>
+              The emulator will run practically any software a real PC (of the spec listed at the top of this file) can.
+            </p><p>
+              The author has tested a number of OSes/GUIs (MS-DOS 6.22, FreeDOS 0.82pl3, Windows 3.0, DESQview 2.8), professional software (Lotus 1-2-3 2.4 and AsEasyAs 5.7 for DOS, Excel 2.1 for Windows, AutoCAD 2.5, WordStar 4), programming languages (QBASIC, GWBASIC, Turbo C++), games (Carrier Command, Police Quest, and a bunch of freeware Windows games), and diagnostic/benchmark software (Manifest, Microsoft MSD, InfoSpot, CheckIt) and all of them run well.
+            </p>
+        	</div>
+  </div>
+
+</div>
+</div>
+    
+    	<div id="templatemo_right_column">
+           
+            <ul class="templatemo_menu">
+              <li><a href="http://www.megalith.co.uk/8086tiny/index.html">Home</a></li>
+              <li><a href="http://www.megalith.co.uk/8086tiny/download.html">Download</a></li>
+              <li><a href="http://www.megalith.co.uk/8086tiny/doc.html" style="background:#0066CC; color:#FFFFFF">Documentation</a></li>
+              <li><a href="http://8086tiny.freeforums.net">Blog/Forum</a></li>
+          </ul>
+          
+          <div class="section_box" align="justify">
+            <div class="subtitle">Author Contact</div>
+              <b>Adrian Cable</b><br />
+              <a href="&#109;&#97;&#105;&#x6c;&#x74;&#111;&#58;&#x61;&#100;&#114;&#x69;&#97;&#110;&#46;&#99;&#97;&#x62;&#x6c;&#x65;&#x40;&#x67;&#109;&#x61;&#105;&#x6c;&#x2e;&#x63;&#111;&#x6d;">&#x61;&#x64;&#x72;&#x69;&#x61;&#110;&#x2e;&#x63;&#97;&#98;&#x6c;&#x65;&#x40;&#103;&#x6d;&#x61;&#105;&#108;&#x2e;&#x63;&#x6f;&#109;</a><br />
+		<br>
+
+<form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
+<input type="hidden" name="cmd" value="_s-xclick">
+<input type="hidden" name="encrypted" value="-----BEGIN PKCS7-----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-----END PKCS7-----
+">
+<input type="image" src="https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif" border="0" name="submit" alt="PayPal - The safer, easier way to pay online!">
+<img alt="" border="0" src="https://www.paypalobjects.com/en_US/i/scr/pixel.gif" width="1" height="1">
+</form>
+
+          </div>
+        </div>
+
+	<div id="templatemo_footer">
+    Copyright © 2013-2014 Adrian Cable · CSS template by <a href="http://www.templatemo.com" rel="nofollow" target="_blank">templatemo.com</a>
+    </div>
+        
+</div>
+<div class="templatemo_spacer"></div>
+</div>
+
+</body>
+</html>
