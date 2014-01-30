@@ -1,10 +1,9 @@
-; BIOS source for 8086tiny IBM PC emulator, a winner of the 2013 IOCCC contest. Compiles with NASM.
-; Copyright 2013, Adrian Cable (adrian.cable@gmail.com). All rights reserved.
+; BIOS source for 8086tiny IBM PC emulator. Compiles with NASM.
+; Copyright 2013, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 ;
-; Revision 1.10
+; Revision 1.11
 ;
-; In accordance with IOCCC norms, this code is licensed under a Creative Commons
-; Attribution-ShareAlike 3.0 Unported License. See: http://creativecommons.org/licenses/by-sa/3.0/
+; This work is licensed under the MIT License. See included LICENSE.TXT.
 
 	cpu	8086
 

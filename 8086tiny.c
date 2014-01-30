@@ -1,13 +1,11 @@
 // 8086tiny: a tiny, highly functional, highly portable PC emulator/VM
 // Copyright 2013, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 //
-// Revision 1.00
+// Revision 1.01
 //
-// This work is licensed under a Creative Commons Attribution-ShareAlike 3.0 Unported License.
-// http://creativecommons.org/licenses/by-sa/3.0/
+// This work is licensed under the MIT License. See included LICENSE.TXT.
 
 #include <time.h>
-#include <memory.h>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -135,11 +133,11 @@
 // Reinterpretation cast
 #define CAST(a) *(a*)&
 
-// Keyboard and timer driver. This will need changing for UNIX/non-UNIX platforms
+// Keyboard and timer driver. This may need changing for UNIX/non-UNIX platforms
 #ifdef _WIN32
-#define KEYBOARD_TIMER_DRIVER (int8_asap = pc_interrupt(8), kbhit()) && (mem[0x4A6] = getch(), pc_interrupt(7));
+#define KEYBOARD_TIMER_DRIVER (pc_interrupt(8), int8_asap = 0, kbhit()) && (mem[0x4A6] = getch(), pc_interrupt(7));
 #else
-#define KEYBOARD_TIMER_DRIVER (int8_asap = read(pc_interrupt(8), mem + 0x4A6, 1)) && pc_interrupt(7)
+#define KEYBOARD_TIMER_DRIVER (pc_interrupt(8), int8_asap = 0, read(0, mem + 0x4A6, 1)) && pc_interrupt(7)
 #endif
 
 // Global variable definitions
@@ -640,7 +638,7 @@ int main(int argc, char **argv)
 				i_reg = i_data0
 
 				NEXT_OPCODE_SUBFUNCTION // PUTCHAR_AL
-					write(1, regs8, 1), fflush(stdout)
+					write(1, regs8, 1)
 				NEXT_OPCODE_SUBFUNCTION // GET_RTC
 					time(disk + 3),
 					memcpy(mem + SEGREG(REG_ES, REG_BX, ), localtime(disk + 3), sizeof(struct tm))
