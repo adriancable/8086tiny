@@ -1,7 +1,7 @@
 ; BIOS source for 8086tiny IBM PC emulator. Compiles with NASM.
 ; Copyright 2013, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 ;
-; Revision 1.11
+; Revision 1.20
 ;
 ; This work is licensed under the MIT License. See included LICENSE.TXT.
 
@@ -185,11 +185,27 @@ bios_entry:
 	; Set up Hercules graphics support. We start with the adapter in text mode
 
 	push	dx
+
 	mov	dx, 0x3b8
 	mov	al, 0
 	out	dx, al		; Set Hercules support to text mode
-	mov	dx, 0
+
+	mov	dx, 0		; The IOCCC version of the emulator also uses I/O port 0 as a graphics mode flag
 	out	dx, al
+
+	mov	dx, 0x3b4
+	mov	al, 1		; Hercules CRTC "horizontal displayed" register select
+	out	dx, al
+	mov	dx, 0x3b5
+	mov	al, 0x2d	; 0x2D = 45 (* 16) = 720 pixels wide (GRAPHICS_X)
+	out	dx, al
+	mov	dx, 0x3b4
+	mov	al, 6		; Hercules CRTC "vertical displayed" register select
+	out	dx, al
+	mov	dx, 0x3b5
+	mov	al, 0x57	; 0x57 = 87 (* 4) = 348 pixels high (GRAPHICS_Y)
+	out	dx, al
+
 	pop	dx
 
 	pop	ax
@@ -724,9 +740,9 @@ skip_timer_increment:
 	out	dx, al
 
 	; We now need to convert the data in I/O port 0x3B8 (Hercules settings) to a new format in
-	; I/O port 0, which we use in 8086tiny for code compactness. Basically this port will contain
-	; 0 if the Hercules graphics is disabled, 92 if operating in bank 1, and 88 if operating in
-	; bank 0
+	; I/O port 0, which we use in the IOCCC version of the emulator for code compactness.
+	; Basically this port will contain 0 if the Hercules graphics is disabled, 2 otherwise. Note,
+	; this is not used in 8086tiny.
 
 	mov	dx, 0x3B8
 	in	al, dx
@@ -740,11 +756,7 @@ skip_timer_increment:
 
 herc_gfx_mode:
 
-	test	al, 0x80	; Bank 1?
-	mov	al, 92		; 8192*92 = 0xB800 which is bank 1's base address
-	jnz	io_init_continue
-
-	mov	al, 88		; 8192*88 = 0xB000 which is bank 0's base address
+	mov	al, 2
 
 io_init_continue:
 
@@ -2945,13 +2957,6 @@ vram_update:
 	mov	byte [cs:int_curpos_x], 0xff
 	mov	byte [cs:int_curpos_y], 0xff
 
-	mov	al, 0x1B
-	extended_putchar_al
-	mov	al, '['
-	extended_putchar_al
-	mov	al, 's'
-	extended_putchar_al
-
 	cmp	byte [cursor_visible-bios_data], 0
 	je	dont_hide_cursor
 
@@ -3108,12 +3113,14 @@ just_show_it:
 
 restore_cursor:
 
-	mov	al, 0x1B
-	extended_putchar_al
-	mov	al, '['
-	extended_putchar_al
-	mov	al, 'u'
-	extended_putchar_al
+	mov	bx, 0x40
+	mov	ds, bx
+
+	mov	ah, 2
+	mov	bh, 0
+	mov	dh, [curpos_y-bios_data]
+	mov	dl, [curpos_x-bios_data]
+	int	10h
 
 	mov	al, 0x1B	; Escape
 	extended_putchar_al
@@ -3123,9 +3130,6 @@ restore_cursor:
 	extended_putchar_al
 	mov	al, 'm'
 	extended_putchar_al
-
-	mov	bx, 0x40
-	mov	ds, bx
 
 	cmp	byte [cursor_visible-bios_data], 0
 	je	vmem_done

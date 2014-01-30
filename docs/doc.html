@@ -160,7 +160,7 @@ This is a free CSS template provided by templatemo.com
 	        <div class="post_title">Graphics Mode Support</div>
         	<div class="text_area">
             <p>
-              Hercules 720x348 monochrome graphics mode emulation is implemented using SDL. Most Hercules features are supported via the normal I/O interface on ports 0x3B8 and 0x3BA including video memory bank switching (segments B000/B800), which some games use for double-buffered graphics. CGA graphics modes are not supported.
+              Hercules 720x348 monochrome graphics mode emulation is implemented using SDL. Most Hercules features are supported via the normal I/O interface on ports 0x3B8 and 0x3BA including video memory bank switching (segments B000/B800), which some games use for double-buffered graphics. Resolution reprogramming via the CRTC register is supported by 8086tiny 1.03 and later, as required by, for example, the ETEN Chinese System (which uses 640 x 408). CGA graphics modes are not supported.
             </p><p>
               When an application enters graphics mode, the emulator will open an SDL window (which will be closed when the application goes back to text mode). To keep the code size down, the emulator as it stands does not include code to redirect keystrokes from the SDL window to the main terminal window. Therefore, the main terminal window must remain in focus when an SDL graphics window is open.
             </p><p>

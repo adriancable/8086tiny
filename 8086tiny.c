@@ -1,7 +1,7 @@
 // 8086tiny: a tiny, highly functional, highly portable PC emulator/VM
 // Copyright 2013, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 //
-// Revision 1.02
+// Revision 1.03
 //
 // This work is licensed under the MIT License. See included LICENSE.TXT.
 
@@ -19,8 +19,6 @@
 
 // Emulator system constants
 
-#define GRAPHICS_X 720
-#define GRAPHICS_Y 348
 #define IO_PORT_COUNT 0x10000
 #define RAM_SIZE 0x10FFF0
 #define REGS_BASE 0xF0000
@@ -138,16 +136,16 @@
 
 // Keyboard and timer driver. This may need changing for UNIX/non-UNIX platforms
 #ifdef _WIN32
-#define KEYBOARD_TIMER_DRIVER (pc_interrupt(8), int8_asap = 0, kbhit()) && (mem[0x4A6] = getch(), pc_interrupt(7));
+#define KEYBOARD_TIMER_DRIVER (pc_interrupt(8), int8_asap = 0, kbhit()) && (mem[0x4A6] = getch(), pc_interrupt(7))
 #else
-#define KEYBOARD_TIMER_DRIVER (pc_interrupt(8), int8_asap = 0, read(0, mem + 0x4A6, 1)) && pc_interrupt(7)
+#define KEYBOARD_TIMER_DRIVER (pc_interrupt(8), int8_asap = read(0, mem + 0x4A6, 1)) && pc_interrupt(7)
 #endif
 
 // Global variable definitions
 
 unsigned char mem[RAM_SIZE], io_ports[IO_PORT_COUNT], *opcode_stream, *regs8, i_rm, i_w, i_reg, i_mod, i_d, i_reg4bit, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en, trap_flag;
 unsigned short *regs16, reg_ip, seg_override, inst_counter, file_index;
-unsigned int op_source, op_dest, rm_addr, op_to_addr, op_from_addr, i_data0, i_data1, i_data2, int8_asap, scratch_uint, scratch2_uint;
+unsigned int op_source, op_dest, rm_addr, op_to_addr, op_from_addr, i_data0, i_data1, i_data2, int8_asap, scratch_uint, scratch2_uint, GRAPHICS_X, GRAPHICS_Y;
 int i_data1r, op_result, disk[3], scratch_int;
 time_t clock_buf;
 
@@ -219,8 +217,8 @@ int set_flags(int new_flags)
 void video_mem_update()
 {	
 	for (scratch_int = GRAPHICS_X * GRAPHICS_Y; scratch_int--;)
-		((unsigned*)sdl_screen->pixels)[scratch_int] = -!!(1 << (7 - scratch_int % 8) & mem[scratch_int / 2880 * 90 + scratch_int % 720 / 8 + ((88 + io_ports[0x3B8] / 128 * 4 + scratch_int / 720 % 4) << 13)]);
-	
+		((unsigned*)sdl_screen->pixels)[scratch_int] = -!!(1 << (7 - scratch_int % 8) & mem[scratch_int / (GRAPHICS_X * 4) * (GRAPHICS_X / 8) + scratch_int % GRAPHICS_X / 8 + ((88 + io_ports[0x3B8] / 128 * 4 + scratch_int / GRAPHICS_X % 4) << 13)]);
+
 	SDL_Flip(sdl_screen);
 }
 #endif
@@ -561,7 +559,10 @@ int main(int argc, char **argv)
 				io_ports[0x3DA] ^= 9,
 				R_M_OP(regs8[REG_AL], =, io_ports[extra ? regs16[REG_DX] : (char)i_data0])
 			NEXT_OPCODE // OUT DX/imm8, AL/AX
-				R_M_OP(io_ports[extra ? regs16[REG_DX] : (char)i_data0], =, regs8[REG_AL])
+				scratch_uint = extra ? regs16[REG_DX] : (char)i_data0,
+				R_M_OP(io_ports[scratch_uint], =, regs8[REG_AL]),
+				scratch_uint == 0x3B5 && io_ports[0x3B4] == 1 && (GRAPHICS_X = regs8[REG_AL] * 16), // Hercules resolution reprogramming. Defaults are set in the BIOS
+				scratch_uint == 0x3B5 && io_ports[0x3B4] == 6 && (GRAPHICS_Y = regs8[REG_AL] * 4)
 			NEXT_OPCODE // REPxx
 				rep_override_en = 2,
 				rep_mode = i_w,
