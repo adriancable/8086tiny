@@ -655,7 +655,7 @@ int main(int argc, char **argv)
 			),
 			i_reg < 2 ? // READ_DISK | WRITE_DISK
 				regs8[REG_AL] = ~lseek(scratch_int = disk[regs8[REG_BL]], CAST(unsigned)regs16[REG_BP] << 9, 0) ?
-					((unsigned(*)())(i_reg ? write : read))(scratch_int, mem + SEGREG(REG_ES, REG_BX, ), regs16[REG_AX])
+					(i_reg ? (unsigned(*)())write : (unsigned(*)())read)(scratch_int, mem + SEGREG(REG_ES, REG_BX, ), regs16[REG_AX])
 				: 0
 			: 0
 		);

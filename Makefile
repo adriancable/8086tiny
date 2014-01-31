@@ -10,3 +10,6 @@ OPTS=`sdl-config --cflags --libs`
 
 8086tiny: 8086tiny.c
 	${CC} 8086tiny.c ${OPTS} -o 8086tiny -O3 -fsigned-char
+
+clean:
+	$(RM) 8086tiny
