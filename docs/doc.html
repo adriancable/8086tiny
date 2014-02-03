@@ -49,8 +49,8 @@ This is a free CSS template provided by templatemo.com
               The 8086tiny distribution includes a Makefile that will compile unchanged under most UNIX platforms. The 8086tiny source also compiles unchanged under Microsoft Visual Studio C/C++.
               </p>
             <p>
-              The Makefile as supplied compiles the full 8086tiny distribution, which includes Hercules graphics support via SDL. If your platform lacks SDL and/or you do not need support for graphics-mode applications,
-              you can compile with <code>-DNO_GRAPHICS</code>.
+              Running <code>make</code> compiles the full 8086tiny distribution, which includes Hercules graphics support via SDL. If your platform lacks SDL and/or you do not need support for graphics-mode applications,
+              you can compile without graphics support by running <code>make no_graphics</code> to produce a smaller binary.
               </p>
         	</div>
   </div>
@@ -58,7 +58,9 @@ This is a free CSS template provided by templatemo.com
   <div class="section_box2" align="justify">
 	        <div class="post_title">Usage</div>
         	<div class="text_area">
-            <p><code>./8086tiny bios-image-file floppy-image-file [harddisk-image-file]</code></p>
+            <p><code>./8086tiny bios-image-file floppy-image-file [@][harddisk-image-file]</code></p>
+
+            <p>If <code>harddisk-image-file</code> is prefixed with <code>@</code> then 8086tiny will boot from the hard disk image. Otherwise, 8086tiny will boot from the floppy disk image.</p>
 
             <p>Under UNIXes, the keyboard must be set to raw mode using <code>stty</code> for the emulator to run. The distribution includes a script called <code>runme</code> which sets the keyboard mode appropriately and runs the emulator with floppy and/or hard disk images as appropriate:</p>
             <code>
@@ -85,8 +87,8 @@ This is a free CSS template provided by templatemo.com
             <p>
               Preparing the hard disk image for use in the emulator under DOS is done just like a real PC:
               <ul>
-                <li>Boot the emulator, and use FDISK to partition the hard disk. When it's done FDISK will reboot the emulator.</li>
-                <li>Use FORMAT C: to format the disk image, and you are done.</li>
+                <li>Boot the emulator, and use <code>FDISK</code> to partition the hard disk. When it's done FDISK will reboot the emulator.</li>
+                <li>Use <code>FORMAT C:</code> (or <code>FORMAT C: /S</code> to create a bootable disk) to format the disk image, and you are done.</li>
                 </ul>
               <p>The resulting disk image is in the right format to be mounted on a real Windows PC using e.g. OSFMount, on a Mac using hdiutil, or on Linux using mount, providing an easy way to copy files and programs to and from the disk image. Or, you can install programs from within the emulator itself using regular floppy disk images (see "Floppy Drive Emulation" below).
             </p>
@@ -102,14 +104,13 @@ This is a free CSS template provided by templatemo.com
             <p>
               The scan code table in the BIOS maps your local keyboard layout onto scan codes matching a US-layout QWERTY keyboard. If you are using an international keyboard layout everything will work fine with no changes, provided "United States 83-key XT keyboard" or similar is selected if your OS (e.g. Windows 3.0) gives the option.
             </p><p>
-              There are special key sequences to get Alt+xxx and Fxxx keys.
-            </p><p>
-              To send an Alt+XXX key combination, press Ctrl+A then the key, so for example to type Alt+F, press Ctrl+A then F.
-            </p><p>
-              To send an Fxx key, press Ctrl+F then a number key. For example, to get the F4 key, press Ctrl+F then 4. To get F10, press Ctrl+F then 0.
-            </p><p>
-              To send a Page Down key, press Ctrl+F then O. To send a Page Up key, press Ctrl+F then E.
-            </p>
+              There are special key sequences to get Alt+<i>xxx</i>, F<i>xx</i> and some Ctrl+<i>xxx</i> keys:
+              </p><ul>
+              <li>To send an Alt+<i>xxx</i> key combination, press Ctrl+A then the key, so for example to type Alt+F, press Ctrl+A then F.</li>
+              <li>To send an F<i>xx</i> key, press Ctrl+F then a number key. For example, to get the F4 key, press Ctrl+F then 4. To get F10, press Ctrl+F then 0.</li>
+              <li>To send Ctrl+A, press Ctrl+F then Ctrl+A. To send Ctrl+F, press Ctrl+F then Ctrl+F.</li>
+              <li>To send a Page Down key, press Ctrl+F then O. To send a Page Up key, press Ctrl+F then E.</li>
+              </ul>
         	</div>
   </div>
 
@@ -134,7 +135,7 @@ This is a free CSS template provided by templatemo.com
             </p><p>
               The emulator uses an overly simplistic algorithm to derive a simulated cylinder/sector/head geometry from the disk image file's size. This algorithm often results in not all the space in the image file being available for disk partitions. For example, creating a 40,000,000 byte image file results in DOS FDISK seeing only 31.9MB as the volume size.
             </p><p>
-              Note that unlike a real PC, the emulator cannot boot from a hard disk (image). Therefore, you will always need to use a bootable floppy image, even if after boot everything runs from the HD.
+              8086tiny will boot from a hard disk image if the HD image filename is prefixed with <code>@</code> on the command line. For example: <code>./8086tiny bios fd.img @hd.img</code>
             </p>
         	</div>
   </div>
@@ -259,7 +260,7 @@ This is a free CSS template provided by templatemo.com
             <p>
               The emulator will run practically any software a real PC (of the spec listed at the top of this file) can.
             </p><p>
-              The author has tested a number of OSes/GUIs (MS-DOS 6.22, FreeDOS 0.82pl3, Windows 3.0, DESQview 2.8), professional software (Lotus 1-2-3 2.4 and AsEasyAs 5.7 for DOS, Excel 2.1 for Windows, AutoCAD 2.5, WordStar 4), programming languages (QBASIC, GWBASIC, Turbo C++), games (Carrier Command, Police Quest, and a bunch of freeware Windows games), and diagnostic/benchmark software (Manifest, Microsoft MSD, InfoSpot, CheckIt) and all of them run well.
+              The author has tested a number of OSes/GUIs (MS-DOS 6.22, FreeDOS 0.82pl3, Linux [ELKS 0.1.4], Windows 3.0, DESQview 2.8), professional software (Lotus 1-2-3 2.4 and AsEasyAs 5.7 for DOS, Excel 2.1 for Windows, AutoCAD 2.5, WordStar 4), programming languages (QBASIC, GWBASIC, Turbo C++), games (Carrier Command, Police Quest, and a bunch of freeware Windows games), and diagnostic/benchmark software (Manifest, Microsoft MSD, InfoSpot, CheckIt) and all of them run well.
             </p>
         	</div>
   </div>

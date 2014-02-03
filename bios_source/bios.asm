@@ -1,7 +1,7 @@
 ; BIOS source for 8086tiny IBM PC emulator. Compiles with NASM.
 ; Copyright 2013, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 ;
-; Revision 1.20
+; Revision 1.30
 ;
 ; This work is licensed under the MIT License. See included LICENSE.TXT.
 
@@ -150,8 +150,8 @@ main:
 
 ; These values (BIOS ID string, BIOS date and so forth) go at the very top of memory
 
-biosstr	db	'8086tiny BIOS Revision 1.10!', 0, 0		; Why not?
-mem_top	db	0xea, 0, 0x01, 0, 0xf0, '01/11/14', 0, 0xfe, 0
+biosstr	db	'8086tiny BIOS Revision 1.30!', 0, 0		; Why not?
+mem_top	db	0xea, 0, 0x01, 0, 0xf0, '02/02/14', 0, 0xfe, 0
 
 bios_entry:
 
@@ -180,7 +180,9 @@ bios_entry:
 	mov	di, 49
 	stosb			; Set XF = 0
 
-	; Now we can do whatever we want!
+	; Now we can do whatever we want! DL starts off being the boot disk.
+
+	mov	[cs:boot_device], dl
 
 	; Set up Hercules graphics support. We start with the adapter in text mode
 
@@ -412,7 +414,8 @@ next_out:
 	mov	es, ax
 
 	mov	ax, 0x0201
-	mov	dx, 0		; Read from FDD
+	mov	dh, 0
+	mov	dl, [cs:boot_device]
 	mov	cx, 1
 	mov	bx, 0x7c00
 	int	13h
@@ -459,6 +462,9 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	mov	byte [es:this_keystroke-bios_data], 8
 
   after_check_bksp:
+
+	cmp	byte [es:next_key_fn-bios_data], 1 ; If previous keypress was Ctrl+F (signifying this key is is Fxx), skip checks for Ctrl+A (Alt+xx) and Ctrl+F (Fxx)
+	je	i2_n
 
 	cmp	al, 0x01 ; Ctrl+A pressed - this is the sequence for "next key is Alt+"
 	jne	i2_not_alt
@@ -635,6 +641,12 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	cmp	byte [es:next_key_fn-bios_data], 1	; Fxx?
 	jne	after_translate
 
+	cmp	byte [es:bp], 1 ; Ctrl+F then Ctrl+A outputs code for Ctrl+A
+	je	after_translate
+
+	cmp	byte [es:bp], 6 ; Ctrl+F then Ctrl+F outputs code for Ctrl+F  
+	je	after_translate
+	
 	mov	byte [es:bp], 0	; Fxx key, so zero out ASCII code
 	add	al, 0x39
 
@@ -971,12 +983,14 @@ int10:
 	extended_putchar_al
 	mov	al, dh		; Row number
 	mov	[es:curpos_y-bios_data], al
+	mov	[es:crt_curpos_y-bios_data], al
 	inc	al
 	call	puts_decimal_al
 	mov	al, ';'		; ANSI
 	extended_putchar_al
 	mov	al, dl		; Column number
 	mov	[es:curpos_x-bios_data], al
+	mov	[es:crt_curpos_x-bios_data], al
 	inc	al
 	call	puts_decimal_al
 	mov	al, 'H'		; Set cursor position command
@@ -1548,10 +1562,12 @@ int10_scroll_down_vmem_update:
 	jne	int10_write_char_inc_x
 
 	dec	byte [es:curpos_x-bios_data]
+	dec	byte [es:crt_curpos_x-bios_data]
 	cmp	byte [es:curpos_x-bios_data], 0
 	jg	int10_write_char_done
 
 	mov	byte [es:curpos_x-bios_data], 0    
+	mov	byte [es:crt_curpos_x-bios_data], 0    
 	jmp	int10_write_char_done
 
     int10_write_char_inc_x:
@@ -1563,11 +1579,13 @@ int10_scroll_down_vmem_update:
 	jne	int10_write_char_not_cr
 
 	mov	byte [es:curpos_x-bios_data],0
+	mov	byte [es:crt_curpos_x-bios_data],0
 	jmp	int10_write_char_done
 
     int10_write_char_not_cr:
 
 	inc	byte [es:curpos_x-bios_data]
+	inc	byte [es:crt_curpos_x-bios_data]
 	cmp	byte [es:curpos_x-bios_data], 80
 	jge	int10_write_char_newline
 	jmp	int10_write_char_done
@@ -1575,11 +1593,14 @@ int10_scroll_down_vmem_update:
     int10_write_char_newline:
 
 	mov	byte [es:curpos_x-bios_data], 0
+	mov	byte [es:crt_curpos_x-bios_data], 0
 	inc	byte [es:curpos_y-bios_data]
+	inc	byte [es:crt_curpos_y-bios_data]
 
 	cmp	byte [es:curpos_y-bios_data], 25
 	jb	int10_write_char_done
 	mov	byte [es:curpos_y-bios_data], 24
+	mov	byte [es:crt_curpos_y-bios_data], 24
 
 	push	cx
 	push	dx
@@ -1714,10 +1735,12 @@ cpu	8086
 	jne	int10_write_char_attrib_inc_x
 
 	dec	byte [es:curpos_x-bios_data]
+	dec	byte [es:crt_curpos_x-bios_data]
 	cmp	byte [es:curpos_x-bios_data], 0
 	jg	int10_write_char_attrib_done
 
 	mov	byte [es:curpos_x-bios_data], 0
+	mov	byte [es:crt_curpos_x-bios_data], 0
 	jmp	int10_write_char_attrib_done
 
     int10_write_char_attrib_inc_x:
@@ -1728,12 +1751,14 @@ cpu	8086
 	cmp	al, 0x0D	; Carriage return?
 	jne	int10_write_char_attrib_not_cr
 
-	mov	byte [es:curpos_x-bios_data],0
+	mov	byte [es:curpos_x-bios_data], 0
+	mov	byte [es:crt_curpos_x-bios_data], 0
 	jmp	int10_write_char_attrib_done
 
     int10_write_char_attrib_not_cr:
 
 	inc	byte [es:curpos_x-bios_data]
+	inc	byte [es:crt_curpos_x-bios_data]
 	cmp	byte [es:curpos_x-bios_data], 80
 	jge	int10_write_char_attrib_newline
 	jmp	int10_write_char_attrib_done
@@ -1741,11 +1766,14 @@ cpu	8086
     int10_write_char_attrib_newline:
 
 	mov	byte [es:curpos_x-bios_data], 0
+	mov	byte [es:crt_curpos_x-bios_data], 0
 	inc	byte [es:curpos_y-bios_data]
+	inc	byte [es:crt_curpos_y-bios_data]
 
 	cmp	byte [es:curpos_y-bios_data], 25
 	jb	int10_write_char_attrib_done
 	mov	byte [es:curpos_y-bios_data], 24
+	mov	byte [es:crt_curpos_y-bios_data], 24
 
 	push	cx
 	push	dx
@@ -1884,6 +1912,15 @@ int13:
 
     i_flop_rd:
 
+	push	si
+	push	bp
+
+	cmp	cl, [cs:int1e_spt]
+	ja	rd_error
+
+	pop	bp
+	pop	si
+
 	mov	dl, 1		; Floppy disk file handle is stored at j[1] in emulator
 	jmp	i_rd
 
@@ -1922,9 +1959,16 @@ int13:
 	jne	rd_noerror
 
 	push	ax
+
 	mov	al, [es:bx+24]	; Number of SPT in floppy disk BPB
-	cmp	al, 0		; If disk is unformatted, do not update the table
-	jne	rd_update_spt
+
+	; cmp	al, 0		; If disk is unformatted, do not update the table
+	; jne	rd_update_spt
+	cmp	al, 9		; 9 SPT, i.e. 720K disk, so update the table
+	je	rd_update_spt
+	cmp	al, 18
+	je	rd_update_spt	; 18 SPT, i.e. 1.44MB disk, so update the table
+
 	pop	ax
 
 	jmp	rd_noerror
@@ -2060,9 +2104,14 @@ wr_fine:
 
     i_gp_fl:
 
+	push	cs
+	pop	es
+	mov	di, int1e	; ES:DI now points to floppy parameters table (INT 1E)
+
 	mov	ax, 0
 	mov	bx, 4
-	mov	cx, 0x4f12
+	mov	ch, 0x4f
+	mov	cl, [cs:int1e_spt]
 	mov	dx, 0x0101
 
 	mov	byte [cs:disk_laststatus], 0
@@ -2483,7 +2532,7 @@ int1e:
 		db 0x02 ; Head load time 4 ms, non-DMA mode 0
 		db 0x25 ; Byte delay until motor turned off
 		db 0x02 ; 512 bytes per sector
-int1e_spt	db 0xff	; 18 sectors per track (1.44MB)
+int1e_spt	db 18	; 18 sectors per track (1.44MB)
 		db 0x1B ; Gap between sectors for 3.5" floppy
 		db 0xFF ; Data length (ignored)
 		db 0x54 ; Gap length when formatting
@@ -2793,7 +2842,9 @@ clear_screen:
 	mov	ax, 0x40
 	mov	es, ax
 	mov	byte [es:curpos_x-bios_data], 0
+	mov	byte [es:crt_curpos_x-bios_data], 0
 	mov	byte [es:curpos_y-bios_data], 0
+	mov	byte [es:crt_curpos_y-bios_data], 0
 
 	pop	es
 	pop	ax
@@ -3015,6 +3066,15 @@ cont:
 	mov	dh, al
 	mov	dl, bl
 
+	cmp	dh, [cs:int_curpos_y]	; Advanced a row since the last time?
+	jne	ansi_set_cur_pos
+	push	dx
+	dec	dl
+	cmp	dl, [cs:int_curpos_x]	; Advanced anything but one column since the last time?
+	pop	dx
+	jne	ansi_set_cur_pos
+	jmp	skip_set_cur_pos
+
 ansi_set_cur_pos:
 
 	mov	al, 0x1B	; Escape
@@ -3095,15 +3155,9 @@ skip_attrib:
 
 	mov	al, [di]
 
-	cmp	al, 7		; Convert BEL character to 0xFE
-	jne	check_space1
-	mov	al, 0xFE
-
-check_space1:
-
-	cmp	al, 4		; Convert DIAMOND character to 0xFE
-	jne	just_show_it
-	mov	al, 0xFE
+	cmp	al, 32		; Convert non-printable ASCII to spaces
+	ja	just_show_it
+	mov	al, 32
 
 just_show_it:
 
@@ -3116,11 +3170,25 @@ restore_cursor:
 	mov	bx, 0x40
 	mov	ds, bx
 
+	; On a real PC, the 6845 CRT cursor position registers take place over the BIOS
+	; Data Area ones. So, keep the BIOS numbers unchanged but actually restore the cursor
+	; according to the CRT positions.
+
+	mov	bh, [curpos_y-bios_data]
+	mov	bl, [curpos_x-bios_data]
+
+	push	bx
+
 	mov	ah, 2
 	mov	bh, 0
-	mov	dh, [curpos_y-bios_data]
-	mov	dl, [curpos_x-bios_data]
+	mov	dh, [crt_curpos_y-bios_data]
+	mov	dl, [crt_curpos_x-bios_data]
 	int	10h
+
+	pop	bx
+
+	mov	[curpos_y-bios_data], bh
+	mov	[curpos_x-bios_data], bl
 
 	mov	al, 0x1B	; Escape
 	extended_putchar_al
@@ -3234,9 +3302,9 @@ kb_led		db	0
 		db	0
 		db	0
 		db	0
-		db	0
-		db	0
-		db	0
+boot_device	db	0
+crt_curpos_x	db	0
+crt_curpos_y	db	0
 key_now_down	db	0
 next_key_fn	db	0
 cursor_visible	db	1

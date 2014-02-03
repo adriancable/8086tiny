@@ -1,7 +1,7 @@
 // 8086tiny: a tiny, highly functional, highly portable PC emulator/VM
 // Copyright 2013, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 //
-// Revision 1.03
+// Revision 1.10
 //
 // This work is licensed under the MIT License. See included LICENSE.TXT.
 
@@ -48,10 +48,10 @@
 #define REG_AH 1
 #define REG_CL 2
 #define REG_CH 3
-#define REG_BL 4
-#define REG_BH 5
-#define REG_DL 6
-#define REG_DH 7
+#define REG_DL 4
+#define REG_DH 5
+#define REG_BL 6
+#define REG_BH 7
 
 // FLAGS register decodes
 
@@ -146,7 +146,7 @@
 unsigned char mem[RAM_SIZE], io_ports[IO_PORT_COUNT], *opcode_stream, *regs8, i_rm, i_w, i_reg, i_mod, i_d, i_reg4bit, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en, trap_flag;
 unsigned short *regs16, reg_ip, seg_override, inst_counter, file_index;
 unsigned int op_source, op_dest, rm_addr, op_to_addr, op_from_addr, i_data0, i_data1, i_data2, int8_asap, scratch_uint, scratch2_uint, GRAPHICS_X, GRAPHICS_Y;
-int i_data1r, op_result, disk[3], scratch_int;
+int i_data1r, op_result, disk[3], scratch_int, curpos_hi, curpos_lo;
 time_t clock_buf;
 
 #ifndef NO_GRAPHICS
@@ -283,12 +283,17 @@ int main(int argc, char **argv)
 	// CS is initialised to F000
 	regs16[REG_CS] = REGS_BASE >> 4;
 
+	// Set DL equal to the boot device: 0 for the FD, or 0x80 for the HD. Normally, boot from the FD.
+	// But, if the HD image file is prefixed with @, then boot from the HD.
+	regs8[REG_DL] = ((argc > 3) && (*argv[3] == '@')) ? argv[3]++, 0x80 : 0;
+
 	// Open BIOS (file id disk[2]), floppy disk image (disk[1]), and hard disk image (disk[0]) if specified
 	for (file_index = 3; file_index;)
 		disk[--file_index] = *++argv ? open(*argv, 32898) : 0;
 
 	// Set CX:AX equal to the hard disk image size, if present
 	CAST(unsigned)regs16[REG_AX] = *disk ? lseek(*disk, 0, 2) >> 9 : 0;
+
 	// Load BIOS image into F000:0100, and set IP to 0100
 	read(disk[2], regs8 + (reg_ip = 0x100), 0xFF00);
 
@@ -557,10 +562,15 @@ int main(int argc, char **argv)
 				R_M_OP(op_from_addr[mem], =, i_data2)
 			NEXT_OPCODE // IN AL/AX, DX/imm8
 				io_ports[0x3DA] ^= 9,
-				R_M_OP(regs8[REG_AL], =, io_ports[extra ? regs16[REG_DX] : (char)i_data0])
+				scratch_uint = extra ? regs16[REG_DX] : (unsigned char)i_data0,
+				scratch_uint == 0x3D5 && io_ports[0x3D4] == 15 && (io_ports[0x3D5] = (mem[0x49E]*80 + mem[0x49D]) & 0xFF), // CRT cursor position (low byte)
+				scratch_uint == 0x3D5 && io_ports[0x3D4] == 14 && (io_ports[0x3D5] = ((mem[0x49E]*80 + mem[0x49D]) & 0xFF00) >> 8),  // " (high byte)
+				R_M_OP(regs8[REG_AL], =, io_ports[scratch_uint])
 			NEXT_OPCODE // OUT DX/imm8, AL/AX
-				scratch_uint = extra ? regs16[REG_DX] : (char)i_data0,
+				scratch_uint = extra ? regs16[REG_DX] : (unsigned char)i_data0,
 				R_M_OP(io_ports[scratch_uint], =, regs8[REG_AL]),
+				scratch_uint == 0x3D5 && io_ports[0x3D4] == 15 && (scratch2_uint = ((mem[0x49E]*80 + mem[0x49D]) & 0xFF00) + regs8[REG_AL], mem[0x49D] = scratch2_uint % 80, mem[0x49E] = scratch2_uint / 80), // CRT cursor position (low byte)
+				scratch_uint == 0x3D5 && io_ports[0x3D4] == 14 && (scratch2_uint = ((mem[0x49E]*80 + mem[0x49D]) & 0xFF) + (regs8[REG_AL] << 8), mem[0x49D] = scratch2_uint % 80, mem[0x49E] = scratch2_uint / 80), // " (high byte)
 				scratch_uint == 0x3B5 && io_ports[0x3B4] == 1 && (GRAPHICS_X = regs8[REG_AL] * 16), // Hercules resolution reprogramming. Defaults are set in the BIOS
 				scratch_uint == 0x3B5 && io_ports[0x3B4] == 6 && (GRAPHICS_Y = regs8[REG_AL] * 4)
 			NEXT_OPCODE // REPxx
@@ -654,8 +664,8 @@ int main(int argc, char **argv)
 					memcpy(mem + SEGREG(REG_ES, REG_BX, ), localtime(&clock_buf), sizeof(struct tm))
 			),
 			i_reg < 2 ? // READ_DISK | WRITE_DISK
-				regs8[REG_AL] = ~lseek(scratch_int = disk[regs8[REG_BL]], CAST(unsigned)regs16[REG_BP] << 9, 0) ?
-					((unsigned(*)())(i_reg ? write : read))(scratch_int, mem + SEGREG(REG_ES, REG_BX, ), regs16[REG_AX])
+				regs8[REG_AL] = ~lseek(scratch_int = disk[regs8[REG_DL]], CAST(unsigned)regs16[REG_BP] << 9, 0) ?
+					(i_reg ? (int(*)())write : (int(*)())read)(scratch_int, mem + SEGREG(REG_ES, REG_BX, ), regs16[REG_AX])
 				: 0
 			: 0
 		);
@@ -670,10 +680,8 @@ int main(int argc, char **argv)
 		if (bios_table_lookup(TABLE_STD_FLAGS_ARITH))
 			set_AF_OF_arith();
 		else if (bios_table_lookup(TABLE_STD_FLAGS_LOGIC))
-		{
-			set_CF(0);
-			set_OF(0);
-		}
+			set_CF(0), set_OF(0);
+
 		// If instruction needs to update SF, ZF and PF, set them as appropriate
 		if (bios_table_lookup(TABLE_STD_FLAGS_SZP))
 		{
