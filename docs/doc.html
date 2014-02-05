@@ -232,12 +232,10 @@ This is a free CSS template provided by templatemo.com
                 <li>Next, index 17 decimal is retrieved from <code>TABLE_XLAT_OPCODE</code> and <code>TABLE_XLAT_SUBFUNCTION</code>, giving a <i>translated opcode ID</i> of 9 decimal and a <i>subfunction ID</i> of 0, respectively.</li>
                 <li>The <code>NEXT_OPCODE</code>/<code>NEXT_OPCODE_SUBFUNCTION</code> chain in the source uses the <i>translated opcode ID</i> and <i>subfunction ID</i> to determine the operation to execute, in this case calling the <code>OP(+=)</code> macro followed by <code>set_CF()</code> to set the carry flag in accordance with the result of the addition.</li>
                 <li>Next, instruction length is computed. Because Intel x86 instructions are of arbitrary length (and, sometimes, multiple encodings of the same instruction can have different lengths), tables are used to determine the instruction length to move IP to the next instruction. The <i>opcode lookup ID</i> is used as an index into <code>TABLE_BASE_INST_SIZE</code>, <code>TABLE_I_MOD_SIZE</code>, and <code>TABLE_I_W_SIZE</code> and these numbers are added to compute the total instruction length.</li>
-                <li>Finally, flags are set. This is done in several stages.
-                <ul>
-                <li>The <i>opcode lookup ID</i> (decimal 17) is used as an index into <code>TABLE_STD_FLAGS_ARITH</code> to give 1, signifying that this instruction sets the auxiliary and overflow flags as standard for arithmetic operations.</li>
-                <li>Next, the <i>opcode lookup ID</i> (decimal 17) is used as an index into <code>TABLE_STD_FLAGS_LOGIC</code> to give 0, signifying no operation. If this table entry were 1, the overflow and carry flags would be set to 0, as standard for logic operations.</li>
-                <li>Finally, the <i>opcode lookup ID</i> (decimal 17) is used as an index into <code>TABLE_STD_FLAGS_SZP</code> to give 1, signifying that this instruction sets the sign, zero and parity flags according to the operation's result in the standard way. Sign and zero flags are set directly from the result, and the parity flag is set by looking up the result in <code>TABLE_PARITY_FLAG</code>.</li>
-                </ul></li>
+                <li>Finally, flags are set. The <i>opcode lookup ID</i> (decimal 17) is used as an index into <code>TABLE_STD_FLAGS</code> to give a bitmask of 3, which is <code>FLAGS_UPDATE_SZP | FLAGS_UPDATE_AO_ARITH</code>.</li>
+                <ul><li><code>FLAGS_UPDATE_SZP</code> (1) signifies that this instruction sets the sign, zero and parity flags according to the operation's result in the standard way. Sign and zero flags are set directly from the result, and the parity flag is set by looking up the result in <code>TABLE_PARITY_FLAG</code>.</li>
+                <li><code>FLAGS_UPDATE_AO_ARITH</code> (2) signifies that this instruction sets the auxiliary and overflow flags as standard for arithmetic operations.</li>
+                <li>If <code>FLAGS_UPDATE_OC_LOGIC</i></code> (4) were set in the bitmask (it is not here), the overflow and carry flags would be set to 0, as standard for logic operations.</li></ul>
               </ul>
 
               <p>The CPU also implements some "special" two-byte opcodes to help the emulator talk with the outside world. These are:
