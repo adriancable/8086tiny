@@ -58,11 +58,11 @@ This is a free CSS template provided by templatemo.com
   <div class="section_box2" align="justify">
 	        <div class="post_title">Usage</div>
         	<div class="text_area">
-            <p><code>./8086tiny bios-image-file floppy-image-file [@][harddisk-image-file]</code></p>
+            <p><code>8086tiny bios-image-file floppy-image-file [@][harddisk-image-file]</code></p>
 
             <p>If <code>harddisk-image-file</code> is prefixed with <code>@</code> then 8086tiny will boot from the hard disk image. Otherwise, 8086tiny will boot from the floppy disk image.</p>
 
-            <p>Under UNIXes, the keyboard must be set to raw mode using <code>stty</code> for the emulator to run. The distribution includes a script called <code>runme</code> which sets the keyboard mode appropriately and runs the emulator with floppy and/or hard disk images as appropriate:</p>
+            <p>Under UNIXes, <b>the keyboard must be set to raw mode using <code>stty</code> for the emulator to run</b>. The distribution includes a script called <code>runme</code> which sets the keyboard mode appropriately and runs the emulator with floppy and/or hard disk images as appropriate:</p>
             <code>
               #!/bin/sh<br>
               clear<br>
@@ -104,13 +104,14 @@ This is a free CSS template provided by templatemo.com
             <p>
               The scan code table in the BIOS maps your local keyboard layout onto scan codes matching a US-layout QWERTY keyboard. If you are using an international keyboard layout everything will work fine with no changes, provided "United States 83-key XT keyboard" or similar is selected if your OS (e.g. Windows 3.0) gives the option.
             </p><p>
-              There are special key sequences to get Alt+<i>xxx</i>, F<i>xx</i> and some Ctrl+<i>xxx</i> keys:
+              For console (text) applications, there are special key sequences to get Alt+<i>xxx</i>, F<i>xx</i> and some Ctrl+<i>xxx</i> keys, since these are not returned directly by the standard C I/O functions:
               </p><ul>
               <li>To send an Alt+<i>xxx</i> key combination, press Ctrl+A then the key, so for example to type Alt+F, press Ctrl+A then F.</li>
               <li>To send an F<i>xx</i> key, press Ctrl+F then a number key. For example, to get the F4 key, press Ctrl+F then 4. To get F10, press Ctrl+F then 0.</li>
               <li>To send Ctrl+A, press Ctrl+F then Ctrl+A. To send Ctrl+F, press Ctrl+F then Ctrl+F.</li>
-              <li>To send a Page Down key, press Ctrl+F then O. To send a Page Up key, press Ctrl+F then E.</li>
+              <li>To send a Page Down key, press Ctrl+F then O. To send a Page Up key, press Ctrl+F then Q.</li>
               </ul>
+            </p><p>For graphics (SDL) applications, most keys should work as normal without needing these special sequences, although they are still required to get Ctrl+F and Ctrl+A.</p>
         	</div>
   </div>
 
@@ -161,11 +162,9 @@ This is a free CSS template provided by templatemo.com
 	        <div class="post_title">Graphics Mode Support</div>
         	<div class="text_area">
             <p>
-              Hercules 720x348 monochrome graphics mode emulation is implemented using SDL. Most Hercules features are supported via the normal I/O interface on ports 0x3B8 and 0x3BA including video memory bank switching (segments B000/B800), which some games use for double-buffered graphics. Resolution reprogramming via the CRTC register is supported by 8086tiny 1.03 and later, as required by, for example, the ETEN Chinese System (which uses 640 x 408). CGA graphics modes are not supported.
+              Hercules 720x348 monochrome graphics mode emulation is implemented using SDL. Most Hercules features are supported via the normal I/O interface on ports 0x3B8 and 0x3BA including video memory bank switching (segments B000/B800), which some games use for double-buffered graphics. Resolution reprogramming via the CRTC register is supported by 8086tiny 1.03 and later, as required by, for example, the ETEN Chinese System (which uses 640 x 408). CGA graphics modes are not supported, however, the <a href="https://www.google.com/#q=unicga">UniCGA emulator</a> should allow you to run CGA graphics applications.
             </p><p>
-              When an application enters graphics mode, the emulator will open an SDL window (which will be closed when the application goes back to text mode). To keep the code size down, the emulator as it stands does not include code to redirect keystrokes from the SDL window to the main terminal window. Therefore, the main terminal window must remain in focus when an SDL graphics window is open.
-            </p><p>
-              On UNIXes, SDL will automatically output graphics via X11 if the DISPLAY environment variable is set up.
+              When an application enters graphics mode, the emulator will open an SDL window (which will be closed when the application goes back to text mode). On UNIXes, SDL will automatically output graphics via X11 if the DISPLAY environment variable is set up.
             </p><p>
               Some applications (e.g. AutoCAD) support a PC configuration with a CGA card and a Hercules card, for simultaneous text and graphics output on different displays. The emulator simulates this configuration, too, using separate windows for the (terminal) text and (SDL) graphics displays.
             </p><p>
@@ -258,7 +257,35 @@ This is a free CSS template provided by templatemo.com
             <p>
               The emulator will run practically any software a real PC (of the spec listed at the top of this file) can.
             </p><p>
-              The author has tested a number of OSes/GUIs (MS-DOS 6.22, FreeDOS 0.82pl3, Linux [ELKS 0.1.4], Windows 3.0, DESQview 2.8), professional software (Lotus 1-2-3 2.4 and AsEasyAs 5.7 for DOS, Excel 2.1 for Windows, AutoCAD 2.5, WordStar 4), programming languages (QBASIC, GWBASIC, Turbo C++), games (Carrier Command, Police Quest, and a bunch of freeware Windows games), and diagnostic/benchmark software (Manifest, Microsoft MSD, InfoSpot, CheckIt) and all of them run well.
+              The author has successfully tested a range of software on the emulator.
+              <ul>
+                <li>OSes/GUIs</li>
+                <ul><li>MS-DOS 6.22</li>
+                  <li>FreeDOS 0.82pl3</li>
+                  <li>Linux/ELKS 0.1.4</li>
+                  <li>Windows 3.0</li>
+                  <li>DESQview 2.8</li></ul>
+                <li>Professional software</li>
+                <ul><li>Lotus 1-2-3 R2.4</li>
+                <li>AsEasyAs 5.7</li>
+                  <li>Excel 2.1 for Windows</li>
+                  <li>AutoCAD 2.5</li>
+                  <li>WordStar 4</li></ul>
+                <li>Programming languages</li>
+                <ul><li>QBASIC</li>
+                  <li>GWBASIC</li>
+                  <li>Turbo C++</li></ul>
+                <li>Games</li>
+                <ul><li>Carrier Command</li>
+                  <li>Police Quest</li>
+                  <li>SimCity</li>
+                  <li>Lots of freeware Windows games</li></ul>
+                <li>Diagnostic/benchmark software</li>
+                <ul><li>Manifest</li>
+                <li>Microsoft MSD</li>
+                  <li>InfoSpot</li>
+                  <li>CheckIt</li></ul>
+                </ul>
             </p>
         	</div>
   </div>
@@ -279,7 +306,8 @@ This is a free CSS template provided by templatemo.com
             <div class="subtitle">Author Contact</div>
               <b>Adrian Cable</b><br />
               <a href="&#109;&#97;&#105;&#x6c;&#x74;&#111;&#58;&#x61;&#100;&#114;&#x69;&#97;&#110;&#46;&#99;&#97;&#x62;&#x6c;&#x65;&#x40;&#x67;&#109;&#x61;&#105;&#x6c;&#x2e;&#x63;&#111;&#x6d;">&#x61;&#x64;&#x72;&#x69;&#x61;&#110;&#x2e;&#x63;&#97;&#98;&#x6c;&#x65;&#x40;&#103;&#x6d;&#x61;&#105;&#108;&#x2e;&#x63;&#x6f;&#109;</a><br />
-		<br>
+
+            <p>If 8086tiny brings you joy or profit, the author welcomes modest donations as a token of appreciation.</p>
 
 		          <center><form action="https://www.paypal.com/cgi-bin/webscr" method="post" target="_top">
 		          <input type="hidden" name="cmd" value="_s-xclick">

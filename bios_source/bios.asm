@@ -1,38 +1,30 @@
 ; BIOS source for 8086tiny IBM PC emulator (revision 1.15 and above). Compiles with NASM.
 ; Copyright 2013-14, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 ;
-; Revision 1.40
+; Revision 1.50
 ;
 ; This work is licensed under the MIT License. See included LICENSE.TXT.
 
 	cpu	8086
-
-; Defines
-
-%define	biosbase 0x000f			; BIOS loads at segment 0xF000
 
 ; Here we define macros for some custom instructions that help the emulator talk with the outside
 ; world. They are described in detail in the hint.html file, which forms part of the emulator
 ; distribution.
 
 %macro	extended_putchar_al 0
-	db	0x0f
-	db	0x00
+	db	0x0f, 0x00
 %endmacro
 
 %macro	extended_get_rtc 0
-	db	0x0f
-	db	0x01
+	db	0x0f, 0x01
 %endmacro
 
 %macro	extended_read_disk 0
-	db	0x0f
-	db	0x02
+	db	0x0f, 0x02
 %endmacro
 
 %macro	extended_write_disk 0
-	db	0x0f
-	db	0x03
+	db	0x0f, 0x03
 %endmacro
 
 org	100h				; BIOS loads at offset 0x0100
@@ -44,52 +36,31 @@ main:
 ; Here go pointers to the different data tables used for instruction decoding
 
 	dw	rm_mode12_reg1	; Table 0: R/M mode 1/2 "register 1" lookup
-	dw	biosbase
 	dw	rm_mode012_reg2	; Table 1: R/M mode 1/2 "register 2" lookup
-	dw	biosbase
 	dw	rm_mode12_disp	; Table 2: R/M mode 1/2 "DISP multiplier" lookup
-	dw	biosbase
 	dw	rm_mode12_dfseg	; Table 3: R/M mode 1/2 "default segment" lookup
-	dw	biosbase
 	dw	rm_mode0_reg1	; Table 4: R/M mode 0 "register 1" lookup
-	dw	biosbase
 	dw	rm_mode012_reg2 ; Table 5: R/M mode 0 "register 2" lookup
-	dw	biosbase
 	dw	rm_mode0_disp	; Table 6: R/M mode 0 "DISP multiplier" lookup
-	dw	biosbase
 	dw	rm_mode0_dfseg	; Table 7: R/M mode 0 "default segment" lookup
-	dw	biosbase
 	dw	xlat_ids	; Table 8: Translation of raw opcode index ("Raw ID") to function number ("Xlat'd ID")
-	dw	biosbase
 	dw	ex_data		; Table 9: Translation of Raw ID to Extra Data
-	dw	biosbase
 	dw	std_flags	; Table 10: How each Raw ID sets the flags (bit 1 = sets SZP, bit 2 = sets AF/OF for arithmetic, bit 3 = sets OF/CF for logic)
-	dw	biosbase
 	dw	parity		; Table 11: Parity flag loop-up table (256 entries)
-	dw	biosbase
 	dw	i_opcodes	; Table 12: 8-bit opcode lookup table
-	dw	biosbase
 	dw	base_size	; Table 13: Translation of Raw ID to base instruction size (bytes)
-	dw	biosbase
 	dw	i_w_adder	; Table 14: Translation of Raw ID to i_w size adder yes/no
-	dw	biosbase
 	dw	i_mod_adder	; Table 15: Translation of Raw ID to i_mod size adder yes/no
-	dw	biosbase
 	dw	jxx_dec_a	; Table 16: Jxx decode table A
-	dw	biosbase
 	dw	jxx_dec_b	; Table 17: Jxx decode table B
-	dw	biosbase
 	dw	jxx_dec_c	; Table 18: Jxx decode table C
-	dw	biosbase
 	dw	jxx_dec_d	; Table 19: Jxx decode table D
-	dw	biosbase
 	dw	flags_mult	; Table 20: FLAGS multipliers
-	dw	biosbase
 
 ; These values (BIOS ID string, BIOS date and so forth) go at the very top of memory
 
-biosstr	db	'8086tiny BIOS Revision 1.40!', 0, 0		; Why not?
-mem_top	db	0xea, 0, 0x01, 0, 0xf0, '02/04/14', 0, 0xfe, 0
+biosstr	db	'8086tiny BIOS Revision 1.50!', 0, 0		; Why not?
+mem_top	db	0xea, 0, 0x01, 0, 0xf0, '02/09/14', 0, 0xfe, 0
 
 bios_entry:
 
@@ -253,9 +224,9 @@ boot:	mov	ax, 0
 
 	cld
 
-	mov	ax, 0
+	xor	ax, ax
 	mov	es, ax
-	mov	di, 0
+	xor	di, di
 	mov	cx, 512
 	rep	stosw
 
@@ -277,7 +248,7 @@ boot:	mov	ax, 0
 
 	mov	ax, 0xffff
 	mov	es, ax
-	mov	di, 0x0
+	mov	di, 0
 	mov	si, mem_top
 	mov	cx, 16
 	rep	movsb
@@ -319,20 +290,18 @@ next_out:
 	cmp	dx, 0xFFF
 	jl	next_out
 
-	mov	dx, 0x3DA	; CGA refresh port
 	mov	al, 0
+
+	mov	dx, 0x3DA	; CGA refresh port
 	out	dx, al
 
 	mov	dx, 0x3BA	; Hercules detection port
-	mov	al, 0
 	out	dx, al
 
 	mov	dx, 0x3B8	; Hercules video mode port
-	mov	al, 0
 	out	dx, al
 
 	mov	dx, 0x3BC	; LPT1
-	mov	al, 0
 	out	dx, al
 
 	mov	dx, 0x40	; PIT channel 0
@@ -340,7 +309,6 @@ next_out:
 	out	dx, al
 
 	mov	dx, 0x62	; PPI - needed for memory parity checks
-	mov	al, 0
 	out	dx, al
 
 ; Read boot sector from FDD, and load it into 0:7C00
@@ -388,7 +356,86 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 
 	; Retrieve the keystroke
 
-	mov	al, [es:this_keystroke-bios_data]
+	mov	ax, [es:this_keystroke-bios_data]
+	mov	byte [es:this_keystroke+1-bios_data], 0
+
+  real_key:
+
+	cmp	ah, 0 ; Not SDL code for special key (e.g. cursor move)
+	je	check_linux_bksp
+
+	cmp	ax, 512 ; Alt+something?
+	jb	check_sdl_f_keys
+
+	sub	ax, 512
+
+	cmp	ax, 160 ; Alt+Space?
+	jne	next_sdl_alt_keys
+	mov	al, ' '
+	mov	byte [es:this_keystroke-bios_data], al
+
+  next_sdl_alt_keys:
+
+	push	ax
+	mov	byte [es:next_key_alt-bios_data], 1
+	mov	byte [es:keyflags1-bios_data], 8 ; Alt flag down
+	mov	byte [es:keyflags2-bios_data], 2 ; Alt flag down
+	mov	al, 0x38 ; Simulated Alt by Ctrl+A prefix?
+	out	0x60, al
+	int	9
+	pop	ax
+
+  check_sdl_f_keys:
+
+	cmp	ax, 293
+	ja	i2_dne ; Unknown key
+
+	cmp	ax, 282
+	jb	check_sdl_pgup_pgdn_keys
+
+	sub	ax, 233
+	cmp	ax, 58 ; F10?
+	jne	next_sdl_f_key
+	sub	ax, 10
+
+  next_sdl_f_key:
+
+	mov	byte [es:next_key_fn-bios_data], 1
+	mov	byte [es:this_keystroke-bios_data], al
+	jmp	i2_n
+
+  check_sdl_pgup_pgdn_keys:
+
+	cmp	ax, 280
+	jb	check_cursor_keys
+
+	cmp	ax, 280 ; PgUp?
+	jne	next_sdl_pgdn
+	mov	byte [es:next_key_fn-bios_data], 1
+	mov	byte [es:this_keystroke-bios_data], 'q'
+	jmp	i2_n
+
+  next_sdl_pgdn:
+
+	cmp	ax, 281 ; PgDn?
+	jne	check_sdl_f_keys
+	mov	byte [es:next_key_fn-bios_data], 1
+	mov	byte [es:this_keystroke-bios_data], 'o'
+	jmp	i2_n
+
+  check_cursor_keys:
+
+	cmp	ax, 273 ; SDL cursor keys
+	jb	check_linux_bksp ; No special handling for other keys yet
+	
+	sub	ax, 208 ; Magic number: convert SDL cursor keys to Linux-style cursor keys
+	mov	byte [es:escape_flag-bios_data], 2
+	jmp	i2_noesc
+
+  check_linux_bksp:
+
+	cmp	al, 0 ; Null keystroke - ignore
+	je	i2_dne
 
 	cmp	al, 0x7f ; Linux code for backspace - change to 8
 	jne	after_check_bksp
@@ -429,7 +476,6 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 
 	cmp	al, 0xe0 ; Some OSes return scan codes after 0xE0 for things like cursor moves. So, if we find it, set a flag saying the next code received should not be translated.
 	mov	byte [es:notranslate_flg-bios_data], 1
-	; je	after_translate
 	je	i2_dne	; Don't add the 0xE0 to the keyboard buffer
 
 	mov	byte [es:notranslate_flg-bios_data], 0
@@ -464,7 +510,7 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	cmp	byte [es:escape_flag-bios_data], 1
 	jne	i2_noesc
 
-	; It is, so check if this key is a ] character
+	; It is, so check if this key is a [ control character
 	cmp	al, '[' ; [ key pressed
 	je	i2_esc
 
@@ -502,35 +548,11 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	mov	byte [es:keyflags2-bios_data], 0
 
 	; Last + this characters are ESC ] xxx - cursor key, so translate and stuff it
-	cmp	al, 'A'
-	je	i2_cur_up
-	cmp	al, 'B'
-	je	i2_cur_down
-	cmp	al, 'D'
-	je	i2_cur_left
-	cmp	al, 'C'
-	je	i2_cur_right
-
-  i2_cur_up:
-
-	mov	al, 0x48 ; Translate UNIX code to cursor key scancode
+	sub	al, 'A'
+	mov	bx, unix_cursor_xlt
+	xlat
 	jmp	after_translate
-
-  i2_cur_down:
-
-	mov	al, 0x50 ; Translate UNIX code to cursor key scancode
-	jmp	after_translate
-
-  i2_cur_left:
-
-	mov	al, 0x4b ; Translate UNIX code to cursor key scancode
-	jmp	after_translate
-
-  i2_cur_right:
-
-	mov	al, 0x4d ; Translate UNIX code to cursor key scancode
-	jmp	after_translate
-
+	
   i2_regular_key:
 
 	mov	byte [es:notranslate_flg-bios_data], 0
@@ -558,7 +580,7 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 
 	pop	ax
 
-	test	al, 1
+	test	al, 1 ; Shift down?
 	jz	i2_n
 
 	mov	al, 0x36 ; Right shift down
@@ -609,9 +631,12 @@ skip_ascii_zero:
 	; Output key down/key up event (scancode in AL) to keyboard port
 	call	keypress_release
 
-	; If scan code is not 0xE0, then also send right shift up
+	; If scan code is not 0xE0, then also send right shift up if necessary
 	cmp	al, 0xe0
 	je	i2_dne
+
+	test	byte [es:keyflags1-bios_data], 1
+	jz	check_alt
 
 	mov	al, 0xb6 ; Right shift up
 	out	0x60, al
@@ -680,7 +705,7 @@ skip_timer_increment:
 
 	inc	byte [cs:int8_call_cnt]
 
-	; A Hercules graphics adapter flips bit 7 of I/O port 3BA, every now and then, apparently!
+	; A Hercules graphics adapter flips bit 7 of I/O port 3BA on refresh
 	mov	dx, 0x3BA
 	in 	al, dx
 	xor	al, 0x80
@@ -728,11 +753,6 @@ i8_stuff_esc:
 	call	keypress_release
 
 i8_end:	
-	; Now, reset emulated PIC
-
-	; mov	al, 0
-	; mov	dx, 0x20
-	; out	dx, al
 
 	pop	si
 	pop	ds
@@ -773,10 +793,8 @@ int10:
 	je	int10_write_char
 	cmp	ah, 0x0f ; Get video mode
 	je	int10_get_vm
-	;cmp	ah, 0x12 ; Feature check (EGA)
-	;je	int10_ega_features
-	;cmp	ah, 0x1a ; Feature check
-	;je	int10_features
+	; cmp	ah, 0x1a ; Feature check
+	; je	int10_features
 
 	iret
 
@@ -843,25 +861,14 @@ int10:
 	jne	cur_visible
 
 	mov	byte [cursor_visible-bios_data], 0	; Hide cursor
+	call	ansi_hide_cursor
+	jmp	cur_done
 
     cur_visible:
 
-	mov	al, 0x1B
-	extended_putchar_al
-	mov	al, '['
-	extended_putchar_al
-	mov	al, '?'
-	extended_putchar_al
-	mov	al, '2'
-	extended_putchar_al
-	mov	al, '5'
-	extended_putchar_al
-	mov	al, 'l'
-	sub	al, [cursor_visible-bios_data]
-	sub	al, [cursor_visible-bios_data]
-	sub	al, [cursor_visible-bios_data]
-	sub	al, [cursor_visible-bios_data]
-	extended_putchar_al
+	call	ansi_show_cursor
+
+    cur_done:
 
 	pop	cx
 	pop	ax
@@ -876,15 +883,26 @@ int10:
 	mov	ax, 0x40
 	mov	es, ax
 
+	mov	[es:curpos_y-bios_data], dh
+	mov	[es:crt_curpos_y-bios_data], dh
+	mov	[es:curpos_x-bios_data], dl
+	mov	[es:crt_curpos_x-bios_data], dl
+
 	cmp	dh, 24
-	jb	skip_set_cur_row_max
-	mov	dh, 24
+	jbe	skip_set_cur_row_max
+
+	; If cursor is moved off the screen, then hide it
+	call	ansi_hide_cursor
+	jmp	skip_set_cur_ansi
 	
     skip_set_cur_row_max:
 
      	cmp	dl, 79
-	jb	skip_set_cur_col_max
-	mov	dl, 79
+	jbe	skip_set_cur_col_max
+
+	; If cursor is moved off the screen, then hide it
+	call	ansi_hide_cursor
+	jmp	skip_set_cur_ansi
 	
     skip_set_cur_col_max:
 
@@ -893,37 +911,37 @@ int10:
 	mov	al, '['		; ANSI
 	extended_putchar_al
 	mov	al, dh		; Row number
-	mov	[es:curpos_y-bios_data], al
-	mov	[es:crt_curpos_y-bios_data], al
 	inc	al
 	call	puts_decimal_al
 	mov	al, ';'		; ANSI
 	extended_putchar_al
 	mov	al, dl		; Column number
-	mov	[es:curpos_x-bios_data], al
-	mov	[es:crt_curpos_x-bios_data], al
 	inc	al
 	call	puts_decimal_al
 	mov	al, 'H'		; Set cursor position command
 	extended_putchar_al
 
+	cmp	byte [es:cursor_visible-bios_data], 1
+	jne	skip_set_cur_ansi
+	call	ansi_show_cursor
+
+    skip_set_cur_ansi:
+
 	pop	ax
 	pop	es
 	iret
 
-  int10_get_cursor:		; We don't really support this - just a placeholder
+  int10_get_cursor:
 
 	push	es
-	push	ax
 
-	mov	ax, 0x40
-	mov	es, ax
+	mov	cx, 0x40
+	mov	es, cx
 
 	mov	cx, 0x0607
 	mov	dl, [es:curpos_x-bios_data]
 	mov	dh, [es:curpos_y-bios_data]
 
-	pop	ax
 	pop	es
 
 	iret
@@ -963,10 +981,10 @@ int10:
 	jne	cls_partial
 
 	cmp	dl, 0x4f ; Clearing columns 0-79
-	jne	cls_partial
+	jb	cls_partial
 
 	cmp	dl, 0x18 ; Clearing rows 0-24 (or more)
-	jl	cls_partial
+	jb	cls_partial
 
 	call	clear_screen
 	iret
@@ -976,7 +994,6 @@ int10:
 	push 	ax
 	push	bx
 
-	; mov	bx, 0
 	mov	bl, al		; Number of rows to scroll are now in bl
 
 	mov	al, 0x1B	; Escape
@@ -1055,18 +1072,7 @@ cs_fs_ml_out:
 	pop	bx
 	pop	ax
 
-	;push	es
-	;mov	ax, 0x40
-	;mov	es, ax
-	;sub	byte [es:curpos_y-bios_data], bl
-	;cmp	byte [es:curpos_y-bios_data], 0
-	;jnl	int10_scroll_up_vmem_update
-
-	;mov	byte [es:curpos_y-bios_data], 0
-
 int10_scroll_up_vmem_update:
-
-	;pop	es
 
 	; Now, we need to update video memory
 
@@ -1124,18 +1130,6 @@ int10_scroll_up_vmem_update:
 	cmp	ch, dh
 	jae	cls_vmem_scroll_up_one_done
 
-	;jne	vmem_scroll_up_copy_next_row
-
-	;push	cx
-	;mov	cx, ax
-	;mov	ah, 0x47
-	;mov	al, 0
-	;cld
-	;rep	stosw
-	;pop	cx
-
-	;jmp	cls_vmem_scroll_up_one_done
-
 vmem_scroll_up_copy_next_row:
 
 	push	cx
@@ -1171,15 +1165,6 @@ vmem_scroll_up_copy_next_row:
 	mov	al, 'm'
 	extended_putchar_al
 
-	;int	8		; Force display update after scroll
-	;int	8		; Force display update after scroll
-	;int	8		; Force display update after scroll
-	;int	8		; Force display update after scroll
-	;int	8		; Force display update after scroll
-	;int	8		; Force display update after scroll
-	;int	8		; Force display update after scroll
-	;int	8		; Force display update after scroll
-
 	pop	di
 	pop	si
 	pop	dx
@@ -1190,8 +1175,6 @@ vmem_scroll_up_copy_next_row:
 	pop	ax
 	pop	bx
 
-	; pop	bx
-	; pop	ax
 	iret
 	
   int10_scrolldown:
@@ -1306,18 +1289,7 @@ vmem_scroll_up_copy_next_row:
 	pop	bx
 	pop	ax
 
-	;push	es
-	;mov	ax, 0x40
-	;mov	es, ax
-	;add	byte [es:curpos_y-bios_data], bl
-	;cmp	byte [es:curpos_y-bios_data], 25
-	;jna	int10_scroll_down_vmem_update
-
-	;mov	byte [es:curpos_y-bios_data], 25
-
 int10_scroll_down_vmem_update:
-
-	;pop	es
 
 	; Now, we need to update video memory
 
@@ -1428,7 +1400,7 @@ int10_scroll_down_vmem_update:
 	mov	bx, 0x40
 	mov	es, bx
 
-	mov	bx, 0xb000
+	mov	bx, 0xc000
 	mov	ds, bx
 
 	mov	bx, 0
@@ -1461,7 +1433,7 @@ int10_scroll_down_vmem_update:
 	mov	bx, 0x40
 	mov	es, bx
 
-	mov	bx, 0xb000
+	mov	bx, 0xc000
 	mov	ds, bx
 
 	mov	bx, 0
@@ -1553,7 +1525,7 @@ int10_scroll_down_vmem_update:
 	mov	bx, 0x40
 	mov	es, bx
 
-	mov	bx, 0xb000
+	mov	bx, 0xc000
 	mov	ds, bx
 
 	mov	bx, 0
@@ -1719,16 +1691,7 @@ cpu	8086
 
 	iret
 
-  ;int10_ega_features:
-
-;	cmp	bl, 0x10
-;	jne	i10_unsup
-;
-;	mov	bx, 0
-;	mov	cx, 0x0005
-;	iret
-;
- ; int10_features:
+; int10_features:
 ;
 ;	; Signify we have CGA display
 ;
@@ -1779,6 +1742,8 @@ int13:
 	je	int13_format
 	cmp	ah, 0x08 ; Get drive parameters (hard disk)
 	je	int13_getparams
+	cmp	ah, 0x0c ; Seek (hard disk)
+	je	int13_seek
 	cmp	ah, 0x10 ; Check if drive ready (hard disk)
 	je	int13_hdready
 	cmp	ah, 0x15 ; Get disk type
@@ -2043,6 +2008,11 @@ wr_fine:
 	mov	byte [cs:disk_laststatus], 0
 	jmp	reach_stack_clc
 
+  int13_seek:
+
+	mov	ah, 0
+	jmp	reach_stack_clc
+
   int13_hdready:
 
 	cmp	byte [cs:num_disks], 2	; HD present?
@@ -2096,13 +2066,12 @@ int14:
 	cmp	ah, 0
 	je	int14_init
 
-	iret
+	jmp	reach_stack_stc
 
   int14_init:
 
 	mov	ax, 0
-
-	iret
+	jmp	reach_stack_stc
 
 ; ************************* INT 15h - get system configuration
 
@@ -2264,12 +2233,12 @@ int17:
 	cmp	ah, 0x01
 	je	int17_initprint ; Initialise printer
 
-	iret
+	jmp	reach_stack_stc
 
   int17_initprint:
 
-	mov	ah, 0
-	iret
+	mov	ah, 1 ; No printer
+	jmp	reach_stack_stc
 
 ; ************************* INT 19h = reboot
 
@@ -2922,18 +2891,7 @@ vram_update:
 	cmp	byte [cursor_visible-bios_data], 0
 	je	dont_hide_cursor
 
-	mov	al, 0x1B
-	extended_putchar_al
-	mov	al, '['
-	extended_putchar_al
-	mov	al, '?'
-	extended_putchar_al
-	mov	al, '2'
-	extended_putchar_al
-	mov	al, '5'
-	extended_putchar_al
-	mov	al, 'l'
-	extended_putchar_al
+	call	ansi_hide_cursor
 
 dont_hide_cursor:
 
@@ -3084,24 +3042,43 @@ restore_cursor:
 	mov	ds, bx
 
 	; On a real PC, the 6845 CRT cursor position registers take place over the BIOS
-	; Data Area ones. So, keep the BIOS numbers unchanged but actually restore the cursor
-	; according to the CRT positions.
+	; Data Area ones. So, if the cursor is not off the screen, set it to the CRT
+	; position.
 
-	mov	bh, [curpos_y-bios_data]
-	mov	bl, [curpos_x-bios_data]
+	mov	bh, [crt_curpos_y-bios_data]
+	mov	bl, [crt_curpos_x-bios_data]
+	
+	cmp	bh, 24
+	ja	vmem_end_hidden_cursor
+	cmp	bl, 79
+	ja	vmem_end_hidden_cursor
 
-	push	bx
+	mov	al, 0x1B	; ANSI
+	extended_putchar_al
+	mov	al, '['		; ANSI
+	extended_putchar_al
+	mov	al, bh		; Row number
+	inc	al
+	call	puts_decimal_al
+	mov	al, ';'		; ANSI
+	extended_putchar_al
+	mov	al, bl		; Column number
+	inc	al
+	call	puts_decimal_al
+	mov	al, 'H'		; Set cursor position command
+	extended_putchar_al
 
-	mov	ah, 2
-	mov	bh, 0
-	mov	dh, [crt_curpos_y-bios_data]
-	mov	dl, [crt_curpos_x-bios_data]
-	int	10h
+	cmp	byte [cursor_visible-bios_data], 1
+	jne	vmem_end_hidden_cursor
 
-	pop	bx
+	call	ansi_show_cursor
+	jmp	skip_restore_cursor
 
-	mov	[curpos_y-bios_data], bh
-	mov	[curpos_x-bios_data], bl
+vmem_end_hidden_cursor:
+
+	call	ansi_hide_cursor
+
+skip_restore_cursor:
 
 	mov	al, 0x1B	; Escape
 	extended_putchar_al
@@ -3112,8 +3089,14 @@ restore_cursor:
 	mov	al, 'm'
 	extended_putchar_al
 
-	cmp	byte [cursor_visible-bios_data], 0
-	je	vmem_done
+vmem_done:
+
+	mov	byte [cs:in_update], 0
+	ret
+
+; Show cursor using ANSI codes
+
+ansi_show_cursor:
 
 	mov	al, 0x1B
 	extended_putchar_al
@@ -3128,9 +3111,25 @@ restore_cursor:
 	mov	al, 'h'
 	extended_putchar_al
 
-vmem_done:
+	ret
 
-	mov	byte [cs:in_update], 0
+; Hide cursor using ANSI codes
+
+ansi_hide_cursor:
+
+	mov	al, 0x1B
+	extended_putchar_al
+	mov	al, '['
+	extended_putchar_al
+	mov	al, '?'
+	extended_putchar_al
+	mov	al, '2'
+	extended_putchar_al
+	mov	al, '5'
+	extended_putchar_al
+	mov	al, 'l'
+	extended_putchar_al
+
 	ret
 
 ; ****************************************************************************************
@@ -3226,7 +3225,7 @@ next_key_alt	db	0
 escape_flag	db	0
 notranslate_flg	db	0
 this_keystroke	db	0
-		db	0
+this_keystroke_ext		db	0
 ending:		times (0xff-($-com1addr)) db	0
 
 ; Keyboard scan code tables
@@ -3300,13 +3299,17 @@ int_table	dw int0
 
 itbl_size	dw $-int_table
 
-; Colour table for converting CGA video memory colours to ANSI colours
+; Conversion from CGA video memory colours to ANSI colours
 
 colour_table	db	30, 34, 32, 36, 31, 35, 33, 37
 
 ; Conversion from non-printable low ASCII to printable
 
 low_ascii_conv	db	' ', 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, '><|!|$', 250, '|^v><--^v'
+
+; Conversion from UNIX cursor keys to scancodes
+
+unix_cursor_xlt	db	0x48, 0x50, 0x4d, 0x4b
 
 ; Internal variables for VMEM driver
 
@@ -3338,6 +3341,7 @@ rm_mode12_dfseg	db	11, 11, 10, 10, 11, 11, 10, 11
 xlat_ids	db	0, 1, 2, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 47, 17, 17, 18, 19, 20, 19, 21, 22, 21, 22, 23, 53, 24, 25, 26, 25, 25, 26, 25, 26, 27, 28, 27, 28, 27, 29, 27, 29, 48, 30, 31, 32, 53, 33, 34, 35, 36, 37, 37, 38, 39, 40, 19, 41, 42, 43, 44, 53, 53, 45, 46, 46, 46, 46, 46, 46, 52, 52, 12
 i_opcodes	db	17, 17, 17, 17, 8, 8, 49, 50, 18, 18, 18, 18, 9, 9, 51, 64, 19, 19, 19, 19, 10, 10, 52, 53, 20, 20, 20, 20, 11, 11, 54, 55, 21, 21, 21, 21, 12, 12, 56, 57, 22, 22, 22, 22, 13, 13, 58, 59, 23, 23, 23, 23, 14, 14, 60, 61, 24, 24, 24, 24, 15, 15, 62, 63, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 31, 31, 48, 48, 25, 25, 25, 25, 26, 26, 26, 26, 32, 32, 32, 32, 32, 32, 32, 32, 65, 66, 67, 68, 69, 70, 71, 72, 27, 27, 27, 27, 33, 33, 34, 34, 35, 35, 36, 36, 37, 37, 38, 38, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 94, 94, 39, 39, 73, 74, 40, 40, 0, 0, 41, 41, 75, 76, 77, 78, 28, 28, 28, 28, 79, 80, 81, 82, 47, 47, 47, 47, 47, 47, 47, 47, 29, 29, 29, 29, 42, 42, 43, 43, 30, 30, 30, 30, 44, 44, 45, 45, 83, 0, 46, 46, 84, 85, 7, 7, 86, 87, 88, 89, 90, 91, 6, 6
 ex_data  	db	21, 0, 0, 1, 0, 0, 0, 21, 0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 0, 0, 43, 0, 0, 0, 0, 0, 0, 1, 2, 1, 0, 0, 1, 0, 0, 1, 1, 0, 3, 0, 8, 8, 9, 10, 10, 11, 11, 8, 0, 9, 1, 10, 2, 11, 0, 36, 0, 0, 0, 0, 0, 0, 255, 0, 16, 22, 0, 255, 48, 2, 255, 255, 40, 11, 1, 2, 40, 80, 81, 92, 93, 94, 95, 0, 21, 1
+;ex_data  	db	21, 0, 0, 1, 0, 0, 0, 21, 0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 0, 0, 43, 0, 0, 0, 0, 0, 0, 1, 2, 1, 0, 0, 1, 0, 0, 1, 1, 0, 3, 0, 8, 8, 9, 10, 10, 11, 11, 8, 27, 9, 39, 10, 2, 11, 0, 36, 0, 0, 0, 0, 0, 0, 255, 0, 16, 22, 0, 255, 48, 2, 255, 255, 40, 11, 1, 2, 40, 80, 81, 92, 93, 94, 95, 0, 21, 1
 std_flags	db	0, 0, 1, 1, 0, 0, 0, 0, 3, 5, 1, 1, 5, 3, 5, 3, 1, 3, 5, 1, 1, 5, 3, 5, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0
 base_size	db	2, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 0, 2, 1, 1, 1, 1, 1, 1, 1, 0, 2, 0, 2, 2, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 0, 1, 1, 1, 1, 1, 2, 2, 0, 0, 0, 0, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3
 i_w_adder	db	0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
