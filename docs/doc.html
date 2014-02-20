@@ -26,20 +26,21 @@ This is a free CSS template provided by templatemo.com
 
 <div class="title">Documentation</div>
 
-<p>8086tiny is a tiny, open source, portable Intel PC emulator/VM, powerful enough to run DOS, Windows 3.0, Excel, MS Flight Simulator, AutoCAD, Lotus 1-2-3, and similar applications. 8086tiny emulates a "late 90's era" PC XT-type machine with the following specification:</p>
+<p>8086tiny is a tiny, free, open source, portable Intel PC emulator/VM, powerful enough to run DOS, Windows 3.0, Excel, MS Flight Simulator, AutoCAD, Lotus 1-2-3, and similar applications. 8086tiny emulates a "late 80's era" PC XT-type machine with the following features:</p>
 
 <ul>
 <li>Intel 8086/186 CPU</li>
 <li>1MB RAM</li>
 <li>3.5" floppy disk controller (1.44MB/720KB)</li>
 <li>Fixed disk controller (supports a single hard drive up to 528MB)</li>
-<li>Hercules graphics card with 720x348 2-color graphics (64KB video RAM), and CGA 80x25 16-color text mode support</li>
-<li>Skeleton support for programmable interval timer (PIT) and programmable interrupt controller (PIC)</li>
+<li>CGA/Hercules graphics card with 720x348 2-color and 320x200 4-color graphics (64KB video RAM), and CGA 80 x 25 16-color text mode support</li>
+<li>Accurate programmable interrupt timer (PIT)</li>
 <li>Keyboard controller with 83-key XT-style keyboard</li>
 <li>Real-time clock</li>
+<li>PC speaker</li>
 </ul>
   
-<p>The emulator uses the SDL graphics library for portability, and compiles under a range of platforms (Windows, Mac OS X, Linux, Android, iOS).</p>
+<p>The emulator uses the SDL graphics library for portability, and compiles under a range of platforms (Windows, Mac OS X, Linux, Android, iOS, Raspberry Pi).</p>
 <p>While 8086tiny as supplied implements only the 8086 instruction set, it can be extended to more complex, modern instruction sets with relative ease.</p>
 
   <div class="section_box2" align="justify">
@@ -48,10 +49,11 @@ This is a free CSS template provided by templatemo.com
             <p>
               The 8086tiny distribution includes a Makefile that will compile unchanged under most UNIX platforms. The 8086tiny source also compiles unchanged under Microsoft Visual Studio C/C++.
               </p>
-            <p>
-              Running <code>make</code> compiles the full 8086tiny distribution, which includes Hercules graphics support via SDL. If your platform lacks SDL and/or you do not need support for graphics-mode applications,
-              you can compile without graphics support by running <code>make no_graphics</code> to produce a smaller binary.
-              </p>
+            <ul>
+              <li>Running <code>make</code> compiles the full 8086tiny distribution, which includes audio and CGA/Hercules graphics support via SDL.</li>
+              <li>To compile for slower platforms (e.g. Raspberry Pi), build with <code>make 8086tiny_slowcpu</code> to increase the graphics emulation frame rate.</li>
+              <li>If your platform lacks SDL and/or you do not need support for graphics-mode applications, you can compile without graphics and audio support by running <code>make no_graphics</code> to produce a smaller binary.</li>
+              </ul>
         	</div>
   </div>
 
@@ -85,12 +87,12 @@ This is a free CSS template provided by templatemo.com
               To create a hard disk image for use with the emulator, start by generating a flat file called, for example, <code>hd.img</code> of the required size (under 528MB), filled with zero bytes, made using <code>mkfile</code> or a similar tool.
             </p>
             <p>
-              Preparing the hard disk image for use in the emulator under DOS is done just like a real PC:
+              Preparing the hard disk image for use with the emulator under DOS is done just like a real PC:
               <ul>
                 <li>Boot the emulator, and use <code>FDISK</code> to partition the hard disk. When it's done FDISK will reboot the emulator.</li>
                 <li>Use <code>FORMAT C:</code> (or <code>FORMAT C: /S</code> to create a bootable disk) to format the disk image, and you are done.</li>
                 </ul>
-              <p>The resulting disk image is in the right format to be mounted on a real Windows PC using e.g. OSFMount, on a Mac using hdiutil, or on Linux using mount, providing an easy way to copy files and programs to and from the disk image. Or, you can install programs from within the emulator itself using regular floppy disk images (see "Floppy Drive Emulation" below).
+              <p>The resulting disk image is in the right format to be mounted on a real Windows PC using e.g. <code>OSFMount</code>, on a Mac using <code>hdiutil</code>, or on Linux using <code>mount</code>, providing an easy way to copy files and programs to and from the disk image. Or, you can install programs from within the emulator itself using regular floppy disk images (see "Floppy Drive Emulation" below).
             </p>
         	</div>
   </div>
@@ -111,7 +113,8 @@ This is a free CSS template provided by templatemo.com
               <li>To send Ctrl+A, press Ctrl+F then Ctrl+A. To send Ctrl+F, press Ctrl+F then Ctrl+F.</li>
               <li>To send a Page Down key, press Ctrl+F then O. To send a Page Up key, press Ctrl+F then Q.</li>
               </ul>
-            </p><p>For graphics (SDL) applications, most keys should work as normal without needing these special sequences, although they are still required to get Ctrl+F and Ctrl+A.</p>
+            </p><p>For graphics (SDL) applications, all keys will work as per a "real" PC without needing the special sequences above.
+            </p><p>The keyboard is polled every <code>KEYBOARD_TIMER_UPDATE_DELAY</code> instructions. Decreasing this value will increase keyboard responsiveness, at the expense of emulated CPU speed, and vice versa. The default value of 20000 should be suitable for most platforms.</p>
         	</div>
   </div>
 
@@ -121,7 +124,7 @@ This is a free CSS template provided by templatemo.com
             <p>
               Emulates a 3.5" high-density floppy drive. Can read, write and format 1.44MB disks (18 sectors per track, 2 heads) and 720KB disks (9 sectors per track, 2 heads).
             </p><p>
-              If you want to install your own software from a set of multiple floppy images (downloaded from e.g. <a href="http://www.vetusware.com">Vetusware</a>), the easiest way to "change disks" is to copy each disk image in turn over the floppy image file you specify on the command line. Don't forget to put your original boot disk back at the end!
+              If you want to install your own software from a set of multiple floppy images (downloaded from e.g. <a href="http://www.vetusware.com">Vetusware</a>), the easiest way to "change disks" is to copy each disk image in turn over the floppy image file you specified on the command line, from a terminal other than the one running 8086tiny. Don't forget to put your original boot disk back at the end!
             </p>
         	</div>
   </div>
@@ -145,15 +148,15 @@ This is a free CSS template provided by templatemo.com
 	        <div class="post_title">Text Mode Support</div>
         	<div class="text_area">
             <p>
-              The emulator supports both text output via the standard BIOS interrupt 0x10 interface, and also direct video memory access (one page, 4KB video RAM at segment B800) in 80x25 CGA 16-color text mode.
+              The emulator supports text output via the standard BIOS interrupt 0x10 interface, and also direct video memory access (one page, 4KB video RAM at segment B800) in 80 x 25 CGA 16-color text mode.
             </p><p>
-              BIOS text output calls are converted to simple writes to stdout. Direct video memory accesses for the 80x25 CGA color text mode are converted to ANSI terminal escape sequences. If you are using a terminal which does not support ANSI (e.g. you are compiling the emulator with MS VC++ and running in a Windows console window) then PC applications that directly write to video memory in text mode may be unusable.
+              BIOS text output calls are converted to simple writes to <code>stdout</code>. Direct video memory accesses for the 80 x 25 CGA color text mode are converted to ANSI terminal escape sequences. If you are using a terminal which does not support ANSI (e.g. you are compiling the emulator with MS VC++ and running in a Windows console window) then PC applications that directly write to video memory in text mode may be unusable. Please make sure your terminal window is at least 80 x 25 characters in size.
             </p><p>
-              Most CGA I/O ports are not supported except for the CGA refresh register at 0x3DA, which some applications use for timing or synchronisation.
+              Video memory in text mode is rendered to the terminal every <code>8 * KEYBOARD_TIMER_UPDATE_DELAY</code> instructions. Decreasing this value will increase the text update rate, at the expense of emulated CPU speed, and vice versa. The default value of 20000 should be suitable for most platforms.</p>
             </p><p>
-              The regular PC character code page (437) includes various extended ASCII characters for things like line drawing. You might want to set the font in your terminal program to something that includes these (for example, on Mac OS X there is a suitable freeware font called Perfect DOS VGA 437).
+              The regular PC character code page (437) includes various extended ASCII characters for things like line drawing. You might want to set the font in your terminal program to something that includes these (for example, on Mac OS X there is a suitable freeware font called Perfect DOS VGA 437). Otherwise, extended characters may render incorrectly (for example as question mark symbols).
             </p><p>
-              Occasionally a DOS application on exit will leave the video hardware in an odd state which confuses the emulator, resulting in subsequent text output being invisible. If this happens, just use the DOS CLS command to clear the screen and all will be well again.
+              Occasionally a DOS application on exit will leave the video hardware in an odd state which confuses the emulator, resulting in subsequent text output being invisible. If this happens, just use the DOS <code>CLS</code> command to clear the screen and all will be well again.
             </p>
         	</div>
   </div>
@@ -162,9 +165,11 @@ This is a free CSS template provided by templatemo.com
 	        <div class="post_title">Graphics Mode Support</div>
         	<div class="text_area">
             <p>
-              Hercules 720x348 monochrome graphics mode emulation is implemented using SDL. Most Hercules features are supported via the normal I/O interface on ports 0x3B8 and 0x3BA including video memory bank switching (segments B000/B800), which some games use for double-buffered graphics. Resolution reprogramming via the CRTC register is supported by 8086tiny 1.03 and later, as required by, for example, the ETEN Chinese System (which uses 640 x 408). CGA graphics modes are not supported, however, the <a href="https://www.google.com/#q=unicga">UniCGA emulator</a> should allow you to run CGA graphics applications.
+              Hercules 720x348 monochrome graphics mode and CGA 320x200 4-color graphics mode are emulated using SDL. Most CGA/Hercules features are supported via the normal I/O interface on ports 0x3D<i>x</i> and 0x3B<i>x</i> including video memory bank switching (segments B000/B800), which some games use for double-buffered graphics. Resolution reprogramming via the CRTC register is supported by 8086tiny 1.03 and later, as required by, for example, the ETEN Chinese System (which uses 640 x 408). The CGA 640x200 2-color mode is currently not supported.
             </p><p>
               When an application enters graphics mode, the emulator will open an SDL window (which will be closed when the application goes back to text mode). On UNIXes, SDL will automatically output graphics via X11 if the DISPLAY environment variable is set up.
+            </p><p>
+              The graphics display is updated every <code>GRAPHICS_UPDATE_DELAY</code> instructions. Decreasing this value will increase the graphics update rate, at the expense of emulated CPU speed, and vice versa. By default, <code>GRAPHICS_UPDATE_DELAY</code> is set to 360000 instructions, which gives good performance for faster platforms. On slower platforms like Raspberry Pi, a smaller value is suitable: building with <code>make 8086tiny_slowcpu</code> reduces <code>GRAPHICS_UPDATE_DELAY</code> to 50000 instructions.
             </p><p>
               Some applications (e.g. AutoCAD) support a PC configuration with a CGA card and a Hercules card, for simultaneous text and graphics output on different displays. The emulator simulates this configuration, too, using separate windows for the (terminal) text and (SDL) graphics displays.
             </p><p>
@@ -186,9 +191,16 @@ This is a free CSS template provided by templatemo.com
 	        <div class="post_title">Hardware Timer Support</div>
         	<div class="text_area">
             <p>
-              A countdown timer on I/O port 0x40 is simulated in an overly simplistic way which is good enough for most software. On a real PC this has a default period of 55ms and is programmable. No programmability is supported in the emulator and the period may be about right or completely wrong depending on the actual speed of your computer.
-            </p><p>
-              On a real PC, interrupt 8 is fired every 55ms. The emulator tries to do the same but again, the delay period is uncalibrated.
+              Programmable interrupt timer channels 0 and 2 are emulated through the usual I/O port 0x40-0x43 interface. Only mode 3 (square wave generator) is currently supported, but this is what most applications use. Software that uses timers to control execution speed such as games should run at an accurate pace.
+            </p>
+        	</div>
+  </div>
+
+        <div class="section_box2" align="justify">
+	        <div class="post_title">PC Speaker Support</div>
+        	<div class="text_area">
+            <p>
+              The PC speaker is emulated through the usual port 0x61 interface. The only PC speaker mode supported is via PIT channel 2, so you will hear most music but not non-musical sound effects.
             </p>
         	</div>
   </div>
@@ -197,10 +209,10 @@ This is a free CSS template provided by templatemo.com
 	        <div class="post_title">BIOS</div>
         	<div class="text_area">
             <p></p>
-              Like a real PC, the emulator needs a BIOS to implement boot functionality and the standard interrupt interfaces. The 8086tiny BIOS was written from scratch using documentation in the public domain. It is around 9KB in size and assembles using NASM. Full source code and a pre-built binary are provided.
+              Like a real PC, the emulator needs a BIOS to implement boot functionality and the standard interrupt interfaces. The 8086tiny BIOS was written from scratch using documentation in the public domain. It is around 6KB in size and assembles using NASM. Full source code and a pre-built binary are provided.
             <p></p>
               The BIOS binary comprises a code section and a data section. The code section implements the standard interrupt interfaces for video, disk, timer, clock and so on, much as a "real" PC BIOS does, and also a small timer-controlled video driver to convert video memory formatting into ANSI escape sequences when the emulator is in text mode.
-              The data section includes typical BIOS structures like a scan code table and the BIOS data area, but also a number of look-up tables to assist the emulator with instruction decoding. Full detail is provided in the CPU section below.
+              The data section includes typical BIOS structures like a scan code table and the BIOS data area, but also a number of look-up tables to assist the emulator with instruction decoding. Full detail is provided in the "CPU, Memory and Register Emulation" section below.
             </p>
         	</div>
   </div>
@@ -211,7 +223,7 @@ This is a free CSS template provided by templatemo.com
             <p>
               The emulator simulates a hardware configuration with A20 address line wraparound disabled, making just over 1MB of RAM available to applications.
             </p><p>
-              Memory map is largely as per a real PC, with interrupt vector table at 0:0, BIOS data area including keyboard buffer at <code>40:0</code>, CGA text video memory at <code>B800:0</code>, Hercules dual-bank graphics memory at <code>B000</code>/<code>B800:0</code>, and BIOS at <code>F000:100</code>. Unlike a real PC, in the emulator the CPU registers are memory-mapped (at <code>F000:0</code>), which enables considerable optimisation of the emulator's instruction execution unit by permitting the unification of memory and register operations, while remaining invisible to the running software.
+              Memory map is largely as per a real PC, with interrupt vector table at 0:0, BIOS data area including keyboard buffer at <code>40:0</code>, CGA text video memory at <code>B800:0</code>, Hercules/CGA graphics memory at <code>B000</code>/<code>B800:0</code>, and BIOS at <code>F000:0100</code>. Unlike a real PC, in the emulator the CPU registers are memory-mapped (at <code>F000:0</code>), which enables considerable optimisation of the emulator's instruction execution unit by permitting the unification of memory and register operations, while remaining invisible to the running software.
             </p>
         	</div>
   </div>
@@ -229,7 +241,7 @@ This is a free CSS template provided by templatemo.com
               <ul>
                 <li>The emulator begins by retrieving index <code>01</code> (the first byte of the instruction) from <code>TABLE_OPCODE_LOOKUP</code>, giving an <i>opcode lookup ID</i> of decimal 17, which corresponds to the Intel instruction template <code>ADD reg, r/m</code>.</li>
                 <li>Next, index 17 decimal is retrieved from <code>TABLE_XLAT_OPCODE</code> and <code>TABLE_XLAT_SUBFUNCTION</code>, giving a <i>translated opcode ID</i> of 9 decimal and a <i>subfunction ID</i> of 0, respectively.</li>
-                <li>The <code>NEXT_OPCODE</code>/<code>NEXT_OPCODE_SUBFUNCTION</code> chain in the source uses the <i>translated opcode ID</i> and <i>subfunction ID</i> to determine the operation to execute, in this case calling the <code>OP(+=)</code> macro followed by <code>set_CF()</code> to set the carry flag in accordance with the result of the addition.</li>
+                <li>The <code>OPCODE</code> chain in the source uses the <i>translated opcode ID</i> and <i>subfunction ID</i> to determine the operation to execute, in this case calling the <code>OP(+=)</code> macro followed by <code>set_CF()</code> to set the carry flag in accordance with the result of the addition.</li>
                 <li>Next, instruction length is computed. Because Intel x86 instructions are of arbitrary length (and, sometimes, multiple encodings of the same instruction can have different lengths), tables are used to determine the instruction length to move IP to the next instruction. The <i>opcode lookup ID</i> is used as an index into <code>TABLE_BASE_INST_SIZE</code>, <code>TABLE_I_MOD_SIZE</code>, and <code>TABLE_I_W_SIZE</code> and these numbers are added to compute the total instruction length.</li>
                 <li>Finally, flags are set. The <i>opcode lookup ID</i> (decimal 17) is used as an index into <code>TABLE_STD_FLAGS</code> to give a bitmask of 3, which is <code>FLAGS_UPDATE_SZP | FLAGS_UPDATE_AO_ARITH</code>.</li>
                 <ul><li><code>FLAGS_UPDATE_SZP</code> (1) signifies that this instruction sets the sign, zero and parity flags according to the operation's result in the standard way. Sign and zero flags are set directly from the result, and the parity flag is set by looking up the result in <code>TABLE_PARITY_FLAG</code>.</li>
@@ -246,7 +258,7 @@ This is a free CSS template provided by templatemo.com
                 </ul>
 
               <p>Emulator exit is triggered by a <code>JMP 0:0</code> instruction, to allow the user to easily quit the emulator without shutting down the terminal.</p>
-              <p>Extension of the instruction set supported by 8086tiny can be implemented by appropriate modification to the tables described above in the BIOS source, and addition of a corresponding new <code>NEXT_OPCODE</code> block in the C source.</p>
+              <p>Extension of the instruction set supported by 8086tiny can be implemented by appropriate modification to the tables described above in the BIOS source, and addition of a corresponding new <code>OPCODE</code> block in the C source.</p>
             </p>
         	</div>
   </div>
@@ -255,7 +267,7 @@ This is a free CSS template provided by templatemo.com
 	        <div class="post_title">Supported Application Software</div>
         	<div class="text_area">
             <p>
-              The emulator will run practically any software a real PC (of the spec listed at the top of this file) can.
+              The emulator will run practically any software a real PC (of the spec listed at the top of this page) can.
             </p><p>
               The author has successfully tested a range of software on the emulator.
               <ul>
@@ -264,10 +276,11 @@ This is a free CSS template provided by templatemo.com
                   <li>FreeDOS 0.82pl3</li>
                   <li>Linux/ELKS 0.1.4</li>
                   <li>Windows 3.0</li>
-                  <li>DESQview 2.8</li></ul>
+                  <li>DESQview 2.8</li>
+                  <li>ETEN Chinese System</li></ul>
                 <li>Professional software</li>
                 <ul><li>Lotus 1-2-3 R2.4</li>
-                <li>AsEasyAs 5.7</li>
+                  <li>AsEasyAs 5.7</li>
                   <li>Excel 2.1 for Windows</li>
                   <li>AutoCAD 2.5</li>
                   <li>WordStar 4</li></ul>
@@ -279,10 +292,12 @@ This is a free CSS template provided by templatemo.com
                 <ul><li>Carrier Command</li>
                   <li>Police Quest</li>
                   <li>SimCity</li>
+                  <li>Alley Cat</li>
+                  <li>MS Flight Simulator 4</li>
                   <li>Lots of freeware Windows games</li></ul>
                 <li>Diagnostic/benchmark software</li>
                 <ul><li>Manifest</li>
-                <li>Microsoft MSD</li>
+                  <li>Microsoft MSD</li>
                   <li>InfoSpot</li>
                   <li>CheckIt</li></ul>
                 </ul>

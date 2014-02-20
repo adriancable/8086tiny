@@ -1,7 +1,7 @@
-; BIOS source for 8086tiny IBM PC emulator (revision 1.15 and above). Compiles with NASM.
+; BIOS source for 8086tiny IBM PC emulator (revision 1.20 and above). Compiles with NASM.
 ; Copyright 2013-14, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 ;
-; Revision 1.50
+; Revision 1.60
 ;
 ; This work is licensed under the MIT License. See included LICENSE.TXT.
 
@@ -59,8 +59,8 @@ main:
 
 ; These values (BIOS ID string, BIOS date and so forth) go at the very top of memory
 
-biosstr	db	'8086tiny BIOS Revision 1.50!', 0, 0		; Why not?
-mem_top	db	0xea, 0, 0x01, 0, 0xf0, '02/09/14', 0, 0xfe, 0
+biosstr	db	'8086tiny BIOS Revision 1.60!', 0, 0		; Why not?
+mem_top	db	0xea, 0, 0x01, 0, 0xf0, '02/19/14', 0, 0xfe, 0
 
 bios_entry:
 
@@ -273,6 +273,16 @@ boot:	mov	ax, 0
 
 ; Set up some I/O ports, between 0 and FFF. Most of them we set to 0xFF, to indicate no device present
 
+	mov	dx, 0x61
+	mov	al, 0
+	out	dx, al		; Make sure the speaker is off
+
+	mov	dx, 0x60
+	out	dx, al		; No scancode
+
+	mov	dx, 0x64
+	out	dx, al		; No key waiting
+
 	mov	dx, 0
 	mov	al, 0xFF
 
@@ -282,7 +292,15 @@ next_out:
 
 	cmp	dx, 0x40	; We deal with the PIT channel 0 later
 	je	next_out
+	cmp	dx, 0x42	; We deal with the PIT channel 2 later
+	je	next_out
 	cmp	dx, 0x3B8	; We deal with the Hercules port later, too
+	je	next_out
+	cmp	dx, 0x60	; Keyboard scancode
+	je	next_out
+	cmp	dx, 0x61	; Sound output
+	je	next_out
+	cmp	dx, 0x64	; Keyboard status
 	je	next_out
 
 	out	dx, al
@@ -304,12 +322,17 @@ next_out:
 	mov	dx, 0x3BC	; LPT1
 	out	dx, al
 
-	mov	dx, 0x40	; PIT channel 0
-	mov	al, 0
-	out	dx, al
-
 	mov	dx, 0x62	; PPI - needed for memory parity checks
 	out	dx, al
+
+; Get initial RTC value
+
+	push	cs
+	pop	es
+	mov	bx, timetable
+	extended_get_rtc
+	mov	ax, [es:tm_msec]
+	mov	[cs:last_int8_msec], ax
 
 ; Read boot sector from FDD, and load it into 0:7C00
 
@@ -327,7 +350,7 @@ next_out:
 
 	jmp	0:0x7c00
 
-; ************************* INT 7h handler - keyboard driver
+; ************************* INT 7h handler - keyboard driver (8086tiny internal)
 
 int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	; ASCII character of the keystroke is at 0040:this_keystroke
@@ -361,76 +384,180 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 
   real_key:
 
-	cmp	ah, 0 ; Not SDL code for special key (e.g. cursor move)
-	je	check_linux_bksp
+	mov	byte [cs:last_key_sdl], 0
 
-	cmp	ax, 512 ; Alt+something?
-	jb	check_sdl_f_keys
+	test	ah, 4 ; This key doesn't come from SDL
+	jz	check_linux_bksp
 
-	sub	ax, 512
+	mov	byte [es:keyflags1-bios_data], 0
+	mov	byte [es:keyflags2-bios_data], 0
 
-	cmp	ax, 160 ; Alt+Space?
-	jne	next_sdl_alt_keys
-	mov	al, ' '
-	mov	byte [es:this_keystroke-bios_data], al
+	mov	byte [cs:last_key_sdl], 1 ; Key down from SDL
 
-  next_sdl_alt_keys:
+	test	ah, 0x40 ; Key up
+	jz	sdl_check_specials
 
-	push	ax
-	mov	byte [es:next_key_alt-bios_data], 1
-	mov	byte [es:keyflags1-bios_data], 8 ; Alt flag down
-	mov	byte [es:keyflags2-bios_data], 2 ; Alt flag down
-	mov	al, 0x38 ; Simulated Alt by Ctrl+A prefix?
-	out	0x60, al
-	int	9
-	pop	ax
+	; and	ah, 0xBF ; Clear key up
+	mov	byte [cs:last_key_sdl], 2 ; Key up from SDL
+
+  sdl_check_specials:
+
+	mov	bx, ax
+	and	bh, 7 ; If key is between 52F and 534 (Shift/Ctrl/Alt), ignore the key state flags
+	cmp	bx, 0x52f
+	je	sdl_just_press_shift
+	cmp	bx, 0x530
+	je	sdl_just_press_shift
+	cmp	bx, 0x533
+	je	sdl_just_press_alt
+	cmp	bx, 0x534
+	je	sdl_just_press_alt
+	cmp	bx, 0x531
+	je	sdl_just_press_ctrl
+	cmp	bx, 0x532
+	je	sdl_just_press_ctrl
+	jmp	sdl_check_alt
+
+  sdl_just_press_shift:
+
+	mov	al, 0x36 ; Shift
+	and	ah, 0x40 ; Key up?
+	add	al, ah
+	add	al, ah
+	call	io_key_available
+	jmp	i2_dne
+
+  sdl_just_press_alt:
+
+	mov	al, 0x38 ; Alt
+	and	ah, 0x40 ; Key up?
+	add	al, ah
+	add	al, ah
+	call	io_key_available
+	jmp	i2_dne
+
+  sdl_just_press_ctrl:
+
+	mov	al, 0x1d ; Ctrl
+	and	ah, 0x40 ; Key up?
+	add	al, ah
+	add	al, ah
+	call	io_key_available
+	jmp	i2_dne
+
+  sdl_check_alt:
+
+	test	ah, 8 ; Alt+something?
+	jz	sdl_no_alt
+	add	byte [es:keyflags1-bios_data], 8
+	add	byte [es:keyflags2-bios_data], 2
+
+  sdl_no_alt:
+
+	test	ah, 0x20 ; Ctrl+something?
+	jz	sdl_no_ctrl
+	add	byte [es:keyflags1-bios_data], 4
+
+  sdl_no_ctrl:
+
+	test	ah, 0x10 ; Shift+something?
+	jz	sdl_no_mods
+	add	byte [es:keyflags1-bios_data], 1
+
+  sdl_no_mods:
+
+	and	ah, 1 ; We have processed all SDL modifiers, so remove them
+
+	;cmp	ax, 160 ; Alt+Space?
+	;jne	next_sdl_alt_keys
+	;mov	al, ' '
+	;mov	byte [es:this_keystroke-bios_data], al
 
   check_sdl_f_keys:
 
-	cmp	ax, 293
+	cmp	ax, 0x125
 	ja	i2_dne ; Unknown key
 
-	cmp	ax, 282
+	cmp	ax, 0x11a
 	jb	check_sdl_pgup_pgdn_keys
 
-	sub	ax, 233
-	cmp	ax, 58 ; F10?
-	jne	next_sdl_f_key
-	sub	ax, 10
+	sub	ax, 0xdf ; F1 - F10
+	cmp	ax, 0x45
+	jb	check_sdl_f_keys2
+	add	ax, 0x12 ; F11 - F12
 
-  next_sdl_f_key:
+  check_sdl_f_keys2:
 
-	mov	byte [es:next_key_fn-bios_data], 1
-	mov	byte [es:this_keystroke-bios_data], al
-	jmp	i2_n
+	mov	bh, al
+	mov	al, 0
+	jmp	sdl_scancode_xlat_done
 
   check_sdl_pgup_pgdn_keys:
 
-	cmp	ax, 280
-	jb	check_cursor_keys
+	cmp	ax, 0x116
+	jb	check_sdl_cursor_keys
+	cmp	ax, 0x119
+	ja	check_sdl_cursor_keys
 
-	cmp	ax, 280 ; PgUp?
-	jne	next_sdl_pgdn
-	mov	byte [es:next_key_fn-bios_data], 1
-	mov	byte [es:this_keystroke-bios_data], 'q'
-	jmp	i2_n
+	sub	ax, 0x116
+	mov	bx, pgup_pgdn_xlt
+	cs	xlat
 
-  next_sdl_pgdn:
+	mov	bh, al
+	mov	al, 0
+	jmp	sdl_scancode_xlat_done
 
-	cmp	ax, 281 ; PgDn?
-	jne	check_sdl_f_keys
-	mov	byte [es:next_key_fn-bios_data], 1
-	mov	byte [es:this_keystroke-bios_data], 'o'
-	jmp	i2_n
+  check_sdl_cursor_keys:
 
-  check_cursor_keys:
-
-	cmp	ax, 273 ; SDL cursor keys
-	jb	check_linux_bksp ; No special handling for other keys yet
+	cmp	ax, 0x111 ; SDL cursor keys
+	jb	sdl_process_key ; No special handling for other keys yet
 	
-	sub	ax, 208 ; Magic number: convert SDL cursor keys to Linux-style cursor keys
-	mov	byte [es:escape_flag-bios_data], 2
-	jmp	i2_noesc
+	sub	ax, 0x111
+	mov	bx, unix_cursor_xlt
+	xlat	; Convert SDL cursor keys to scancode
+
+	mov	bh, al
+	mov	al, 0
+	jmp	sdl_scancode_xlat_done
+
+  sdl_process_key:
+
+	cmp	ax, 0x100
+	jae	i2_dne ; Unsupported key
+	cmp	al, 0x7f ; SDL 0x7F backspace? Convert to 0x08
+	jne	sdl_process_key2
+	mov	al, 8
+
+  sdl_process_key2:
+
+	push	ax
+	mov	bx, a2scan_tbl ; ASCII to scancode table
+	xlat
+	mov	bh, al
+	pop	ax ; Scancode in BH, keycode in AL
+
+  sdl_scancode_xlat_done:
+
+	add	bh, 0x80 ; Key up scancode
+	cmp	byte [cs:last_key_sdl], 2 ; Key up?
+	je	sdl_not_in_buf
+
+	sub	bh, 0x80 ; Key down scancode
+
+  sdl_key_down:
+	
+	mov	byte [es:bp], al ; ASCII code
+	mov	byte [es:bp+1], bh ; Scan code
+
+	; ESC keystroke is in the buffer now
+	add	word [es:kbbuf_tail-bios_data], 2
+	call	kb_adjust_buf ; Wrap the tail around the head if the buffer gets too large
+	
+  sdl_not_in_buf:
+
+	mov	al, bh
+	call	io_key_available
+	jmp	i2_dne	
 
   check_linux_bksp:
 
@@ -454,8 +581,7 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	mov	byte [es:keyflags1-bios_data], 8 ; Alt flag down
 	mov	byte [es:keyflags2-bios_data], 2 ; Alt flag down
 	mov	al, 0x38 ; Simulated Alt by Ctrl+A prefix?
-	out	0x60, al
-	int	9
+	call	io_key_available
 
 	mov	byte [es:next_key_alt-bios_data], 1
 	jmp	i2_dne
@@ -560,7 +686,7 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	mov	bx, a2shift_tbl ; ASCII to shift code table
 	xlat
 
-	; Now, AL is 1 if shift is down, 0 otherwise. If shift is down, put a shift down scan code
+	; Now, BL is 1 if shift is down, 0 otherwise. If shift is down, put a shift down scan code
 	; in port 0x60. Then call int 9. Otherwise, put a shift up scan code in, and call int 9.
 
 	push	ax
@@ -571,6 +697,28 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	shl	ah, 3
 	cpu	8086
 	add	al, ah
+
+	cmp	byte [es:this_keystroke-bios_data], 0x1A ; Ctrl+A to Ctrl+Z? Then add Ctrl to BIOS key flags
+	ja	i2_no_ctrl
+	cmp	byte [es:this_keystroke-bios_data], 0
+	je	i2_no_ctrl
+	cmp	byte [es:this_keystroke-bios_data], 0xD ; CR
+	je	i2_no_ctrl
+	cmp	byte [es:this_keystroke-bios_data], 0xA ; LF
+	je	i2_no_ctrl
+	cmp	byte [es:this_keystroke-bios_data], 0x8 ; Backspace
+	je	i2_no_ctrl
+	cmp	byte [es:this_keystroke-bios_data], 0x9 ; Tab
+	je	i2_no_ctrl
+	add	al, 4 ; Ctrl in key flags
+
+	push	ax
+	mov	al, 0x1d ; Ctrl key down
+	call	io_key_available
+	pop	ax
+
+  i2_no_ctrl:
+
 	mov	[es:keyflags1-bios_data], al
 
 	cpu	186
@@ -584,8 +732,7 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	jz	i2_n
 
 	mov	al, 0x36 ; Right shift down
-	out	0x60, al
-	int	9
+	call	io_key_available
 
   i2_n:
 
@@ -636,11 +783,18 @@ skip_ascii_zero:
 	je	i2_dne
 
 	test	byte [es:keyflags1-bios_data], 1
-	jz	check_alt
+	jz	check_ctrl
 
 	mov	al, 0xb6 ; Right shift up
-	out	0x60, al
-	int	9
+	call	io_key_available
+
+  check_ctrl:
+
+	test	byte [es:keyflags1-bios_data], 4
+	jz	check_alt
+
+	mov	al, 0x9d ; Right Ctrl up
+	call	io_key_available
 
   check_alt:
 
@@ -656,8 +810,7 @@ skip_ascii_zero:
   endalt:
 
 	mov	al, 0xb8 ; Left Alt up
-	out	0x60, al
-	int	9
+	call	io_key_available
 
   i2_dne:
 
@@ -668,10 +821,14 @@ skip_ascii_zero:
 	pop	ds
 	iret
 
-; ************************* INT 8h handler - timer
+; ************************* INT Ah handler - timer (8086tiny internal)
 
-int8:	
-	; See if there is an ESC waiting from a previous INT 2h. If so, put it in the keyboard buffer
+inta:
+	; 8086tiny called interrupt 0xA frequently, at a rate dependent on the speed of your computer.
+	; This interrupt handler scales down the call rate and calls INT 8 at 18.2 times per second,
+	; as per a real PC.
+
+	; See if there is an ESC waiting from a previous INT 7h. If so, put it in the keyboard buffer
 	; (because by now - 1/18.2 secs on - we know it can't be part of an escape key sequence).
 	; Also handle CGA refresh register. Also release any keys that are still marked as down.
 
@@ -688,28 +845,64 @@ int8:
 
 	call	vmem_driver_entry	; CGA text mode driver - documented later
 
+	; Increment 32-bit BIOS timer tick counter, once every 18.2 ms
+
+	push	cs
+	pop	es
+	mov	bx, timetable
+	extended_get_rtc
+	
+	mov	ax, [cs:tm_msec]
+	sub	ax, [cs:last_int8_msec]
+
+  make_ctr_positive:
+
+	cmp	ax, 0
+	jge	no_add_1000
+
+	add	ax, 1000
+	jmp	make_ctr_positive
+
+  no_add_1000:
+
 	mov	bx, 0x40
 	mov	es, bx
 
-	; Increment 32-bit BIOS timer tick counter, once every 8 calls
+	mov	dx, 0
+	mov	bx, 1193
+	mul	bx
 
-	cmp	byte [cs:int8_call_cnt], 8
-	jne	skip_timer_increment
+	mov	bx, [es:timer0_freq-bios_data]
+	cmp	bx, 0 ; 0 actually means FFFF
+	jne	no_adjust_10000
 
-	add	word [es:0x6C], 1
+	mov	bx, 0xffff
+
+  no_adjust_10000:
+
+	div	bx ; AX now contains number of timer ticks since last int 8 (DX is remainder)
+
+	cmp	ax, 0
+	je	i8_end
+
+	add	word [es:0x6C], ax
 	adc	word [es:0x6E], 0
 
-	mov	byte [cs:int8_call_cnt], 0
+inta_call_int8:
+
+	int	8
+	dec	ax
+	cmp	ax, 0
+	jne	inta_call_int8
+
+	mov	ax, [cs:tm_msec]
+	mov	[cs:last_int8_msec], ax
 
 skip_timer_increment:
 
-	inc	byte [cs:int8_call_cnt]
-
-	; A Hercules graphics adapter flips bit 7 of I/O port 3BA on refresh
-	mov	dx, 0x3BA
-	in 	al, dx
-	xor	al, 0x80
-	out	dx, al
+	; If last key was from SDL, don't simulate key up events (SDL will do it for us)
+	cmp	byte [cs:last_key_sdl], 0
+	jne	i8_end
 
 	; See if we have any keys down. If so, release them
 	cmp	byte [es:key_now_down-bios_data], 0
@@ -718,8 +911,7 @@ skip_timer_increment:
 	mov	al, [es:key_now_down-bios_data]
 	mov	byte [es:key_now_down-bios_data], 0
 	add	al, 0x80
-	out	0x60, al
-	int	9
+	call	io_key_available
 
   i8_no_key_down:
 
@@ -754,6 +946,12 @@ i8_stuff_esc:
 
 i8_end:	
 
+	; A Hercules graphics adapter flips bit 7 of I/O port 3BA on refresh
+	mov	dx, 0x3BA
+	in 	al, dx
+	xor	al, 0x80
+	out	dx, al
+
 	pop	si
 	pop	ds
 	pop	di
@@ -765,8 +963,13 @@ i8_end:
 	pop	bx
 	pop	ax
 
-	int	0x1c
+	iret
 
+; ************************* INT 8h handler - timer
+
+int8:
+
+	int	0x1c
 	iret
 
 ; ************************* INT 10h handler - video services
@@ -803,6 +1006,40 @@ int10:
 	push	dx
 	push	cx
 	push	bx
+	push	es
+
+	cmp	al, 4 ; CGA mode 4
+	je	int10_switch_to_cga_gfx
+	cmp	al, 5
+	je	int10_switch_to_cga_gfx
+	cmp	al, 6
+	je	int10_switch_to_cga_gfx
+
+	push	ax
+
+	mov	dx, 0x3b8
+	mov	al, 0
+	out	dx, al
+
+	mov	dx, 0x3b4
+	mov	al, 1		; Hercules CRTC "horizontal displayed" register select
+	out	dx, al
+	mov	dx, 0x3b5
+	mov	al, 0x2d	; 0x2D = 45 (* 16) = 720 pixels wide (GRAPHICS_X)
+	out	dx, al
+	mov	dx, 0x3b4
+	mov	al, 6		; Hercules CRTC "vertical displayed" register select
+	out	dx, al
+	mov	dx, 0x3b5
+	mov	al, 0x57	; 0x57 = 87 (* 4) = 348 pixels high (GRAPHICS_Y)
+	out	dx, al
+
+	mov	dx, 0x40
+	mov	es, dx
+
+	mov	byte [es:0xac], 0 ; Tell emulator we are in Hercules mode
+
+	pop	ax
 
 	cmp	al, 7		; If an app tries to set Hercules text mode 7, actually set mode 3 (we do not support mode 7's video memory buffer at B000:0)
 	je	int10_set_vm_3
@@ -811,18 +1048,54 @@ int10:
 
 	jmp	int10_set_vm_continue
 
+  int10_switch_to_cga_gfx:
+
+	; Switch to CGA-like graphics mode (with Hercules CRTC set for 640 x 400)
+	
+	mov	dx, 0x40
+	mov	es, dx
+
+	mov	[es:0x49], al	; Current video mode
+	mov	byte [es:0xac], 1 ; Tell emulator we are in CGA mode
+
+	mov	dx, 0x3b4
+	mov	al, 1		; Hercules CRTC "horizontal displayed" register select
+	out	dx, al
+	mov	dx, 0x3b5
+	mov	al, 0x28	; 0x28 = 40 (* 16) = 640 pixels wide (GRAPHICS_X)
+	out	dx, al
+	mov	dx, 0x3b4
+	mov	al, 6		; Hercules CRTC "vertical displayed" register select
+	out	dx, al
+	mov	dx, 0x3b5
+	mov	al, 0x64	; 0x64 = 100 (* 4) = 400 pixels high (GRAPHICS_Y)
+	out	dx, al
+
+	mov	dx, 0x3b8
+	mov	al, 0x8a
+	out	dx, al
+
+	mov	bh, 7	
+	call	clear_screen
+
+	mov	ax, 0x30
+	jmp	svmn_exit
+
   int10_set_vm_3:
 
 	mov	al, 3
 
   int10_set_vm_continue:
 
-	mov	[cs:vidmode], al
+	mov	bx, 0x40
+	mov	es, bx
+
+	mov	[es:vidmode-bios_data], al
 
 	mov	bh, 7		; Black background, white foreground
 	call	clear_screen	; ANSI clear screen
 
-	cmp	byte [cs:vidmode], 6
+	cmp	byte [es:vidmode-bios_data], 6
 	je	set6
 	mov	al, 0x30
 	jmp	svmn
@@ -840,6 +1113,9 @@ int10:
 	out	dx, al
 	pop	ax
 
+  svmn_exit:
+
+	pop	es
 	pop	bx
 	pop	cx
 	pop	dx
@@ -877,16 +1153,16 @@ int10:
 
   int10_set_cursor:
 
-	push	es
+	push	ds
 	push	ax
 
 	mov	ax, 0x40
-	mov	es, ax
+	mov	ds, ax
 
-	mov	[es:curpos_y-bios_data], dh
-	mov	[es:crt_curpos_y-bios_data], dh
-	mov	[es:curpos_x-bios_data], dl
-	mov	[es:crt_curpos_x-bios_data], dl
+	mov	[curpos_y-bios_data], dh
+	mov	[crt_curpos_y-bios_data], dh
+	mov	[curpos_x-bios_data], dl
+	mov	[crt_curpos_x-bios_data], dl
 
 	cmp	dh, 24
 	jbe	skip_set_cur_row_max
@@ -921,14 +1197,14 @@ int10:
 	mov	al, 'H'		; Set cursor position command
 	extended_putchar_al
 
-	cmp	byte [es:cursor_visible-bios_data], 1
+	cmp	byte [cursor_visible-bios_data], 1
 	jne	skip_set_cur_ansi
 	call	ansi_show_cursor
 
     skip_set_cur_ansi:
 
 	pop	ax
-	pop	es
+	pop	ds
 	iret
 
   int10_get_cursor:
@@ -1422,7 +1698,7 @@ int10_scroll_down_vmem_update:
 
   int10_write_char:
 
-	; First we kind of write the character to "video memory". This is so that
+	; First write the character to a buffer at C000:0. This is so that
 	; we can later retrieve it using the get character at cursor function,
 	; which GWBASIC uses.
 
@@ -1511,9 +1787,9 @@ int10_scroll_down_vmem_update:
 
   int10_write_char_attrib:
 
-	; First we write the character to a fake "video memory" location. This is so that
-	; we can later retrieve it using the get character at cursor function, which
-	; GWBASIC uses in this way to see what has been typed.
+	; First write the character to a buffer at C000:0. This is so that
+	; we can later retrieve it using the get character at cursor function,
+	; which GWBASIC uses.
 
 	push	ds
 	push	es
@@ -1560,8 +1836,8 @@ cpu	8086
 	extended_putchar_al
 	mov	al, bl		; Foreground colour
 	call	puts_decimal_al
-	mov	al, 'm'		; Set cursor position command
-	extended_putchar_al
+	; mov	al, 'm'		; Set cursor position command
+	; extended_putchar_al
 
 	pop	ax
 	pop	bx
@@ -1570,10 +1846,9 @@ cpu	8086
 	push	ax
 
 	mov	bh, bl
-	shr	bl, 1
-	shr	bl, 1
-	shr	bl, 1
-	shr	bl, 1
+cpu	186
+	shr	bl, 4
+cpu	8086
 	and	bl, 7		; Background colour now in bl
 
 	mov	bp, bx		; Convert from CGA to ANSI
@@ -1584,10 +1859,12 @@ cpu	8086
 	rol	bh, 1
 	and	bh, 1		; Bright attribute now in bh (not used right now)
 
-	mov	al, 0x1B	; Escape
+	mov	al, ';'
 	extended_putchar_al
-	mov	al, '['		; ANSI
-	extended_putchar_al
+	; mov	al, 0x1B	; Escape
+	; extended_putchar_al
+	; mov	al, '['		; ANSI
+	; extended_putchar_al
 	mov	al, bl		; Background colour
 	call	puts_decimal_al
 	mov	al, 'm'		; Set cursor position command
@@ -1685,9 +1962,16 @@ cpu	8086
 
   int10_get_vm:
 
+	push	es
+
+	mov	ax, 0x40
+	mov	es, ax
+
 	mov	ah, 80 ; Number of columns
-	mov	al, [cs:vidmode]
+	mov	al, [es:vidmode-bios_data]
 	mov	bh, 0
+
+	pop	es
 
 	iret
 
@@ -2139,16 +2423,18 @@ int16:
 	push	cx
 	push	dx
 
-	sti
-
 	mov	bx, 0x40
 	mov	es, bx
 
     kb_gkblock:
 
+	cli
+
 	mov	cx, [es:kbbuf_tail-bios_data]
 	mov	bx, [es:kbbuf_head-bios_data]
 	mov	dx, [es:bx]
+
+	sti
 
 	; Wait until there is a key in the buffer
 	cmp	cx, bx
@@ -2174,14 +2460,14 @@ int16:
 	push	cx
 	push	dx
 
-	sti
-
 	mov	bx, 0x40
 	mov	es, bx
 
 	mov	cx, [es:kbbuf_tail-bios_data]
 	mov	bx, [es:kbbuf_head-bios_data]
 	mov	dx, [es:bx]
+
+	sti
 
 	; Check if there is a key in the buffer. ZF is set if there is none.
 	cmp	cx, bx
@@ -2192,8 +2478,8 @@ int16:
 	pop	dx
 	pop	cx
 	pop	bx
-	pop	es	
-	
+	pop	es
+
 	retf	2	; NEED TO FIX THIS!!
 
     kb_shiftflags:
@@ -2276,6 +2562,12 @@ int1a:
 	extended_get_rtc
 
 	mov	ax, 182  ; Clock ticks in 10 seconds
+	mul	word [tm_msec]
+	mov	bx, 10000
+	div	bx ; AX now contains clock ticks in milliseconds counter
+	mov	[tm_msec], ax
+
+	mov	ax, 182  ; Clock ticks in 10 seconds
 	mul	word [tm_sec]
 	mov	bx, 10
 	mov	dx, 0
@@ -2289,6 +2581,8 @@ int1a:
 	mov	ax, 65520 ; Clock ticks in an hour
 	mul	word [tm_hour] ; DX:AX now contains clock ticks in hours counter
 
+	add	ax, [tm_msec] ; Add milliseconds in to AX
+	adc	dx, 0 ; Carry into DX if necessary
 	add	ax, [tm_sec] ; Add seconds in to AX
 	adc	dx, 0 ; Carry into DX if necessary
 	add	ax, [tm_min] ; Add minutes in to AX
@@ -2475,7 +2769,6 @@ int4:
 int5:
 int6:
 int9:
-inta:
 intb:
 intc:
 intd:
@@ -2539,14 +2832,14 @@ puts_decimal_al:
 	aam
 	add	ax, 0x3030	; '00'
 	
-	xchg	ah, al		; First digit is now in AL
-	cmp	al, 0x30
+	cmp	ah, 0x30
 	je	pda_2nd		; First digit is zero, so print only 2nd digit
 
+	xchg	ah, al		; First digit is now in AL
 	extended_putchar_al	; Print first digit
+	xchg	ah, al		; Second digit is now in AL
 
   pda_2nd:
-	xchg	ah, al		; Second digit is now in AL
 
 	extended_putchar_al	; Print second digit
 
@@ -2783,24 +3076,35 @@ keypress_release:
 	push	ax
 
 	cmp	byte [es:key_now_down-bios_data], 0
-	je	kpr_no_key_down
+	je	kpr_no_prev_release
 
 	mov	al, [es:key_now_down-bios_data]
 	add	al, 0x80
-	out	0x60, al
-	int	9
+	call	io_key_available
 
 	pop	ax
 	push	ax
 
-  kpr_no_key_down:
+  kpr_no_prev_release:
 
 	mov	[es:key_now_down-bios_data], al
-	out	0x60, al
-	int	9
+	call	io_key_available
 
 	pop	ax
 
+	ret
+
+; Sets key available flag on I/O port 0x64, outputs key scan code in AL to I/O port 0x60, and calls INT 9
+
+io_key_available:
+
+	push	ax
+	mov	al, 1
+	out	0x64, al
+	pop	ax
+
+	out	0x60, al
+	int	9
 	ret
 
 ; Reaches up into the stack before the end of an interrupt handler, and sets the carry flag
@@ -2838,30 +3142,28 @@ reach_stack_carry:
 ; them.
 
 vmem_driver_entry:
-
-	cmp	byte [cs:in_update], 1
-	je	just_finish		; If we are already in the middle of an update, just pass INT 8 on. Needed for re-entrancy.
 	
+	cmp	byte [cs:in_update], 1
+	je	just_finish		; If we are already in the middle of an update, skip. Needed for re-entrancy
+
 	inc	byte [cs:int8_ctr]
-	cmp	byte [cs:int8_ctr], 5	; Only do this once every 5 timer ticks
-	je	gmode_test
-
-just_finish:
-
-	ret
+	cmp	byte [cs:int8_ctr], 8	; Only do this once every 8 timer ticks
+	jne	just_finish
 
 gmode_test:
 
+	mov	byte [cs:int8_ctr], 0	
 	mov	dx, 0x3b8		; Do not update if in Hercules graphics mode
 	in	al, dx
 	test	al, 2
 	jz	vram_zero_check
 
+just_finish:
+
 	ret
 
 vram_zero_check:			; Check if video memory is blank - if so, do nothing
 	
-	mov	byte [cs:int8_ctr], 0	
 	mov	byte [cs:in_update], 1
 
 	sti
@@ -2875,30 +3177,30 @@ vram_zero_check:			; Check if video memory is blank - if so, do nothing
 
 	repz	scasw
 	cmp	cx, 0
-	jne	vram_update		; CX != 0 so something has been written to video RAM
-
-	mov	byte [cs:in_update], 0
-	ret
+	je	vmem_done		; CX = 0 so nothing has been written to video RAM
 
 vram_update:
 
 	mov	bx, 0x40
-	mov	ds, bx
+	mov	es, bx
 
-	mov	byte [cs:int_curpos_x], 0xff
-	mov	byte [cs:int_curpos_y], 0xff
+	push	cs
+	pop	ds
 
-	cmp	byte [cursor_visible-bios_data], 0
+	mov	byte [int_curpos_x], 0xff
+	mov	byte [int_curpos_y], 0xff
+
+	cmp	byte [es:cursor_visible-bios_data], 0
 	je	dont_hide_cursor
 
 	call	ansi_hide_cursor
 
 dont_hide_cursor:
 
-	mov	byte [cs:last_attrib], 0xff
+	mov	byte [last_attrib], 0xff
 
 	mov	bx, 0xb800
-	mov	ds, bx
+	mov	es, bx
 
 	; Set up the initial cursor coordinates. Since the first thing we do is increment the cursor
 	; position, this initial position is actually off the screen
@@ -2927,7 +3229,7 @@ disp_loop:
 	je	restore_cursor
 
 cont:
-	cmp	byte [di], 0		; Ignore null characters in video memory
+	cmp	byte [es:di], 0		; Ignore null characters in video memory
 	je	disp_loop
 
 	mov	ax, bp
@@ -2935,14 +3237,13 @@ cont:
 	mov	dh, al
 	mov	dl, bl
 
-	cmp	dh, [cs:int_curpos_y]	; Advanced a row since the last time?
+	cmp	dh, [int_curpos_y]	; Same row as the last time?
 	jne	ansi_set_cur_pos
 	push	dx
 	dec	dl
-	cmp	dl, [cs:int_curpos_x]	; Advanced anything but one column since the last time?
+	cmp	dl, [int_curpos_x]	; One column to the right since the last time?
 	pop	dx
-	jne	ansi_set_cur_pos
-	jmp	skip_set_cur_pos
+	je	skip_set_cur_pos
 
 ansi_set_cur_pos:
 
@@ -2961,68 +3262,62 @@ ansi_set_cur_pos:
 	mov	al, 'H'		; Set cursor position command
 	extended_putchar_al
 
+	mov	[int_curpos_y], dh
+
 skip_set_cur_pos:
 
-	mov	[cs:int_curpos_y], dh
-	mov	[cs:int_curpos_x], dl
+	mov	[int_curpos_x], dl
 
-	mov	bl, [di+1]
-	cmp	bl, [cs:last_attrib]
+	mov	dl, [es:di+1]
+	cmp	dl, [last_attrib]
 	je	skip_attrib
 
-	mov	[cs:last_attrib], bl
-
-	push	bx
-
-	mov	bh, bl
-	and	bl, 7		; Foreground colour now in bl
-
-	push	bp
-	mov	bp, bx		; Convert from CGA to ANSI
-	and	bp, 7
-	mov	bl, byte [cs:bp+colour_table]
-	pop	bp
-
-	and	bh, 8		; Bright attribute now in bh
-	cpu	186
-	shr	bh, 3
-	cpu	8086
+	mov	[last_attrib], dl
 
 	mov	al, 0x1B	; Escape
 	extended_putchar_al
 	mov	al, '['		; ANSI
 	extended_putchar_al
-	mov	al, bh		; Bright attribute
-	call	puts_decimal_al
-	mov	al, ';'
-	extended_putchar_al
-	mov	al, bl		; Foreground colour
+
+	mov	al, dl
+	and	al, 8		; Bright attribute now in AL
+	cpu	186
+	shr	al, 3
+	cpu	8086
+
 	call	puts_decimal_al
 	mov	al, ';'
 	extended_putchar_al
 
-	pop	bx
+	push	dx
+
+	and	dl, 7		; Foreground colour now in DL
+	mov	bx, colour_table
+	mov	al, dl
+	xlat
+
+	call	puts_decimal_al
+	mov	al, ';'
+	extended_putchar_al
+
+	pop	dx
 
 	cpu	186
-	shr	bl, 4
+	shr	dl, 4
 	cpu	8086
-	and	bl, 7		; Background colour now in bl
+	and	dl, 7		; Background colour now in DL
 
-	push	bp
-	mov	bp, bx		; Convert from CGA to ANSI
-	and	bp, 7
-	mov	bl, byte [cs:bp+colour_table]
-	pop	bp
+	mov	al, dl
+	xlat
 
-	add	bl, 10
-	mov	al, bl		; Background colour
+	add	al, 10
 	call	puts_decimal_al
 	mov	al, 'm'		; Set cursor attribute command
 	extended_putchar_al
 
 skip_attrib:
 
-	mov	al, [di]
+	mov	al, [es:di]
 
 	cmp	al, 32		; Non-printable ASCII? (< 32 decimal)
 	jae	just_show_it
@@ -3226,11 +3521,14 @@ escape_flag	db	0
 notranslate_flg	db	0
 this_keystroke	db	0
 this_keystroke_ext		db	0
+timer0_freq	dw	0xffff ; PIT channel 0 (55ms)
+timer2_freq	dw	0      ; PIT channel 2
+cga_vmode	db	0
 ending:		times (0xff-($-com1addr)) db	0
 
 ; Keyboard scan code tables
 
-a2scan_tbl      db	0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0E, 0x0F, 0x00, 0x00, 0x00, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x39, 0x02, 0x28, 0x04, 0x05, 0x06, 0x08, 0x28, 0x0A, 0x0B, 0x09, 0x0D, 0x33, 0x0C, 0x34, 0x35, 0x0B, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x27, 0x27, 0x33, 0x0D, 0x34, 0x35, 0x03, 0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C, 0x1A, 0x2B, 0x1B, 0x07, 0x0C, 0x29, 0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C, 0x1A, 0x2B, 0x1B, 0x29, 0x0E
+a2scan_tbl      db	0xFF, 0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x0E, 0x0F, 0x24, 0x25, 0x26, 0x1C, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C, 0x01, 0x00, 0x00, 0x00, 0x00, 0x39, 0x02, 0x28, 0x04, 0x05, 0x06, 0x08, 0x28, 0x0A, 0x0B, 0x09, 0x0D, 0x33, 0x0C, 0x34, 0x35, 0x0B, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x27, 0x27, 0x33, 0x0D, 0x34, 0x35, 0x03, 0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C, 0x1A, 0x2B, 0x1B, 0x07, 0x0C, 0x29, 0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C, 0x1A, 0x2B, 0x1B, 0x29, 0x0E
 a2shift_tbl     db	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0
 
 ; Interrupt vector table - to copy to 0:0
@@ -3307,9 +3605,13 @@ colour_table	db	30, 34, 32, 36, 31, 35, 33, 37
 
 low_ascii_conv	db	' ', 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, 250, '><|!|$', 250, '|^v><--^v'
 
-; Conversion from UNIX cursor keys to scancodes
+; Conversion from UNIX cursor keys/SDL keycodes to scancodes
 
 unix_cursor_xlt	db	0x48, 0x50, 0x4d, 0x4b
+
+; Conversion from SDL keycodes to Home/End/PgUp/PgDn scancodes
+
+pgup_pgdn_xlt	db	0x47, 0x4f, 0x49, 0x51
 
 ; Internal variables for VMEM driver
 
@@ -3319,9 +3621,10 @@ last_attrib	db	0
 int_curpos_x	db	0
 int_curpos_y	db	0
 
-; Int 8 call counter - used for timer slowdown
+; INT 8 millisecond counter
 
-int8_call_cnt	db	0
+last_int8_msec	dw	0
+last_key_sdl	db 	0
 
 ; Now follow the tables for instruction decode helping
 
@@ -3341,7 +3644,6 @@ rm_mode12_dfseg	db	11, 11, 10, 10, 11, 11, 10, 11
 xlat_ids	db	0, 1, 2, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 47, 17, 17, 18, 19, 20, 19, 21, 22, 21, 22, 23, 53, 24, 25, 26, 25, 25, 26, 25, 26, 27, 28, 27, 28, 27, 29, 27, 29, 48, 30, 31, 32, 53, 33, 34, 35, 36, 37, 37, 38, 39, 40, 19, 41, 42, 43, 44, 53, 53, 45, 46, 46, 46, 46, 46, 46, 52, 52, 12
 i_opcodes	db	17, 17, 17, 17, 8, 8, 49, 50, 18, 18, 18, 18, 9, 9, 51, 64, 19, 19, 19, 19, 10, 10, 52, 53, 20, 20, 20, 20, 11, 11, 54, 55, 21, 21, 21, 21, 12, 12, 56, 57, 22, 22, 22, 22, 13, 13, 58, 59, 23, 23, 23, 23, 14, 14, 60, 61, 24, 24, 24, 24, 15, 15, 62, 63, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 31, 31, 48, 48, 25, 25, 25, 25, 26, 26, 26, 26, 32, 32, 32, 32, 32, 32, 32, 32, 65, 66, 67, 68, 69, 70, 71, 72, 27, 27, 27, 27, 33, 33, 34, 34, 35, 35, 36, 36, 37, 37, 38, 38, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 94, 94, 39, 39, 73, 74, 40, 40, 0, 0, 41, 41, 75, 76, 77, 78, 28, 28, 28, 28, 79, 80, 81, 82, 47, 47, 47, 47, 47, 47, 47, 47, 29, 29, 29, 29, 42, 42, 43, 43, 30, 30, 30, 30, 44, 44, 45, 45, 83, 0, 46, 46, 84, 85, 7, 7, 86, 87, 88, 89, 90, 91, 6, 6
 ex_data  	db	21, 0, 0, 1, 0, 0, 0, 21, 0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 0, 0, 43, 0, 0, 0, 0, 0, 0, 1, 2, 1, 0, 0, 1, 0, 0, 1, 1, 0, 3, 0, 8, 8, 9, 10, 10, 11, 11, 8, 0, 9, 1, 10, 2, 11, 0, 36, 0, 0, 0, 0, 0, 0, 255, 0, 16, 22, 0, 255, 48, 2, 255, 255, 40, 11, 1, 2, 40, 80, 81, 92, 93, 94, 95, 0, 21, 1
-;ex_data  	db	21, 0, 0, 1, 0, 0, 0, 21, 0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 0, 0, 43, 0, 0, 0, 0, 0, 0, 1, 2, 1, 0, 0, 1, 0, 0, 1, 1, 0, 3, 0, 8, 8, 9, 10, 10, 11, 11, 8, 27, 9, 39, 10, 2, 11, 0, 36, 0, 0, 0, 0, 0, 0, 255, 0, 16, 22, 0, 255, 48, 2, 255, 255, 40, 11, 1, 2, 40, 80, 81, 92, 93, 94, 95, 0, 21, 1
 std_flags	db	0, 0, 1, 1, 0, 0, 0, 0, 3, 5, 1, 1, 5, 3, 5, 3, 1, 3, 5, 1, 1, 5, 3, 5, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0
 base_size	db	2, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 0, 2, 1, 1, 1, 1, 1, 1, 1, 0, 2, 0, 2, 2, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 0, 1, 1, 1, 1, 1, 2, 2, 0, 0, 0, 0, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3
 i_w_adder	db	0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
@@ -3369,3 +3671,4 @@ tm_year		equ $+20
 tm_wday		equ $+24
 tm_yday		equ $+28
 tm_dst		equ $+32
+tm_msec		equ $+36

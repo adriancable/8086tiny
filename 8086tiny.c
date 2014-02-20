@@ -1,11 +1,12 @@
 // 8086tiny: a tiny, highly functional, highly portable PC emulator/VM
 // Copyright 2013-14, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 //
-// Revision 1.15
+// Revision 1.20
 //
 // This work is licensed under the MIT License. See included LICENSE.TXT.
 
 #include <time.h>
+#include <sys/timeb.h>
 #include <memory.h>
 
 #ifndef _WIN32
@@ -21,6 +22,12 @@
 #define IO_PORT_COUNT 0x10000
 #define RAM_SIZE 0x10FFF0
 #define REGS_BASE 0xF0000
+
+// Graphics/timer/keyboard update delays (explained later)
+#ifndef GRAPHICS_UPDATE_DELAY
+#define GRAPHICS_UPDATE_DELAY 360000
+#endif
+#define KEYBOARD_TIMER_UPDATE_DELAY 20000
 
 // 16-bit register decodes
 #define REG_AX 0
@@ -88,8 +95,7 @@
 
 // Decode mod, r_m and reg fields in instruction
 #define DECODE_RM_REG scratch2_uint = 4 * !i_mod, \
-					  scratch_int = i_rm, \
-					  op_to_addr = rm_addr = i_mod < 3 ? SEGREG(seg_override_en ? seg_override : bios_table_lookup(scratch2_uint + 3), bios_table_lookup(scratch2_uint), regs16[bios_table_lookup(scratch2_uint + 1)] + bios_table_lookup(scratch2_uint + 2) * i_data1+) : GET_REG_ADDR(i_rm), \
+					  op_to_addr = rm_addr = i_mod < 3 ? SEGREG(seg_override_en ? seg_override : bios_table_lookup[scratch2_uint + 3][i_rm], bios_table_lookup[scratch2_uint][i_rm], regs16[bios_table_lookup[scratch2_uint + 1][i_rm]] + bios_table_lookup[scratch2_uint + 2][i_rm] * i_data1+) : GET_REG_ADDR(i_rm), \
 					  op_from_addr = scratch_uint = GET_REG_ADDR(i_reg), \
 					  i_d ? op_from_addr = rm_addr, op_to_addr = scratch_uint : scratch_uint
 
@@ -99,13 +105,9 @@
 // Returns number of top bit in operand (i.e. 8 for 8-bit operands, 16 for 16-bit operands)
 #define TOP_BIT 8*(i_w + 1)
 
-// Returns next opcode word from instruction stream
-#define GET_NEXT_OPCODE CAST(short)opcode_stream[++scratch_int]
-
 // Opcode execution unit helpers
-#define NEXT_OPCODE_SUBFUNCTION ),i_reg--||(
-#define NEXT_OPCODE ); else if (!xlat_opcode_id--) (
-#define NEXT_OPCODE_CHAIN ); if (!xlat_opcode_id--) (
+#define OPCODE ;break; case
+#define OPCODE_CHAIN ; case
 
 // [I]MUL/[I]DIV/DAA/DAS/ADC/SBB helpers
 #define MUL_MACRO(op_data_type,out_regs) (raw_opcode_id = 19, \
@@ -152,19 +154,22 @@
 #ifdef NO_GRAPHICS
 #define SDL_KEYBOARD_DRIVER KEYBOARD_DRIVER
 #else
-#define SDL_KEYBOARD_DRIVER sdl_screen ? SDL_PollEvent(&sdl_event) && (sdl_event.type == SDL_KEYDOWN) && (scratch_uint = sdl_event.key.keysym.unicode, CAST(short)mem[0x4A6] = 2*(sdl_event.key.keysym.mod & KMOD_ALT) + ((!scratch_uint || scratch_uint > 0x7F) ? sdl_event.key.keysym.sym : scratch_uint), pc_interrupt(7)) : (KEYBOARD_DRIVER)
+#define SDL_KEYBOARD_DRIVER sdl_screen ? SDL_PollEvent(&sdl_event) && (sdl_event.type == SDL_KEYDOWN || sdl_event.type == SDL_KEYUP) && (scratch_uint = sdl_event.key.keysym.unicode, scratch2_uint = sdl_event.key.keysym.mod, CAST(short)mem[0x4A6] = 0x400 + 0x800*!!(scratch2_uint & KMOD_ALT) + 0x1000*!!(scratch2_uint & KMOD_SHIFT) + 0x2000*!!(scratch2_uint & KMOD_CTRL) + 0x4000*(sdl_event.type == SDL_KEYUP) + ((!scratch_uint || scratch_uint > 0x7F) ? sdl_event.key.keysym.sym : scratch_uint), pc_interrupt(7)) : (KEYBOARD_DRIVER)
 #endif
 
 // Global variable definitions
-unsigned char mem[RAM_SIZE], io_ports[IO_PORT_COUNT], *opcode_stream, *regs8, i_rm, i_w, i_reg, i_mod, i_mod_size, i_d, i_reg4bit, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en, trap_flag, int8_asap;
-unsigned short *regs16, reg_ip, seg_override, inst_counter, file_index;
-unsigned int op_source, op_dest, rm_addr, op_to_addr, op_from_addr, i_data0, i_data1, i_data2, scratch_uint, scratch2_uint, GRAPHICS_X, GRAPHICS_Y;
+unsigned char mem[RAM_SIZE], io_ports[IO_PORT_COUNT], *opcode_stream, *regs8, i_rm, i_w, i_reg, i_mod, i_mod_size, i_d, i_reg4bit, raw_opcode_id, xlat_opcode_id, extra, rep_mode, seg_override_en, rep_override_en, trap_flag, int8_asap, *bios_table_lookup[21], scratch_uchar, io_hi_lo, spkr_mode;
+unsigned short *regs16, reg_ip, seg_override, file_index, wave_counter;
+unsigned int op_source, op_dest, rm_addr, op_to_addr, op_from_addr, i_data0, i_data1, i_data2, scratch_uint, scratch2_uint, GRAPHICS_X, GRAPHICS_Y, inst_counter, cga_pixels[16], herc_pixels[16];
 int i_data1r, op_result, disk[3], scratch_int;
 time_t clock_buf;
+struct timeb ms_clock;
 
 #ifndef NO_GRAPHICS
+SDL_AudioSpec sdl_audio = {44100, AUDIO_U8, 1, 0, 256};
 SDL_Surface *sdl_screen;
 SDL_Event sdl_event;
+unsigned short cga_colors[4] = {0x0000 /* Black */, 0x1F1F /* Cyan */, 0xE3E3 /* Magenta */, 0xFFFF /* White */};
 #endif
 
 // Helper functions
@@ -187,12 +192,6 @@ char set_OF(int new_OF)
 	return regs8[FLAG_OF] = !!new_OF;
 }
 
-// Lookup a value in BIOS helper table #table_num, index #scratch_int
-unsigned char bios_table_lookup(char table_num)
-{
-	return regs8[regs16[0x81 + table_num] + scratch_int];
-}
-
 // Set auxiliary and overflow flag after arithmetic operations
 char set_AF_OF_arith()
 {
@@ -207,27 +206,16 @@ char set_AF_OF_arith()
 void make_flags()
 {
 	scratch_uint = 0xF002; // 8086 has reserved and unused flags set to 1
-	for (scratch_int = 9; scratch_int--;)
-		scratch_uint += regs8[FLAG_CF + scratch_int] << bios_table_lookup(TABLE_FLAGS_BITFIELDS);
+	for (int i = 9; i--;)
+		scratch_uint += regs8[FLAG_CF + i] << bios_table_lookup[TABLE_FLAGS_BITFIELDS][i];
 }
 
 // Set emulated CPU FLAGS register from regs8[FLAG_xx] values
 void set_flags(int new_flags)
 {
-	for (scratch_int = 9; scratch_int--;)
-		regs8[FLAG_CF + scratch_int] = !!(1 << bios_table_lookup(TABLE_FLAGS_BITFIELDS) & new_flags);
+	for (int i = 9; i--;)
+		regs8[FLAG_CF + i] = !!(1 << bios_table_lookup[TABLE_FLAGS_BITFIELDS][i] & new_flags);
 }
-
-// Refresh SDL display from emulated Hercules graphics card video memory
-#ifndef NO_GRAPHICS
-void video_mem_update()
-{	
-	for (scratch_int = GRAPHICS_X * GRAPHICS_Y; scratch_int--;)
-		((unsigned*)sdl_screen->pixels)[scratch_int] = -!!(1 << (7 - scratch_int & 7) & mem[scratch_int / (GRAPHICS_X * 4) * (GRAPHICS_X / 8) + scratch_int % GRAPHICS_X / 8 + ((88 + io_ports[0x3B8] / 128 * 4 + scratch_int / GRAPHICS_X % 4) << 13)]);
-
-	SDL_Flip(sdl_screen);
-}
-#endif
 
 // Execute INT #interrupt_num on the emulated machine
 char pc_interrupt(unsigned char interrupt_num)
@@ -250,58 +238,34 @@ int AAA_AAS(char which_operation)
 	return (regs16[REG_AX] += 262 * which_operation*set_AF(set_CF(((regs8[REG_AL] & 0x0F) > 9) || regs8[FLAG_AF])), regs8[REG_AL] &= 0x0F);
 }
 
-// Helper function for MOVS (extra=0), STOS (extra=1), LODS (extra=2)
-int movs_stos_lods()
+#ifndef NO_GRAPHICS
+void audio_callback(void *data, unsigned char *stream, int len)
 {
-	scratch2_uint = seg_override_en ? seg_override : REG_DS;
-
-	for (scratch_uint = rep_override_en ? regs16[REG_CX] : 1; scratch_uint; scratch_uint--)
-	{
-		MEM_OP(extra < 2 ? SEGREG(REG_ES, REG_DI,) : REGS_BASE, =, extra & 1 ? REGS_BASE : SEGREG(scratch2_uint, REG_SI,)),
-		extra & 1 || INDEX_INC(REG_SI),
-		extra & 2 || INDEX_INC(REG_DI);
-	}
-
-	return rep_override_en && (regs16[REG_CX] = 0);
+	for (int i = 0; i < len; i++)
+		stream[i] = (io_ports[0x61] & 3) && spkr_mode == 0xB6 && CAST(unsigned short)mem[0x4AA] ? -((54 * wave_counter++ / CAST(unsigned short)mem[0x4AA]) & 1) : sdl_audio.silence;
 }
+#endif
 
-// Helper function for CMPS (extra=0), SCAS (extra=1)
-int cmps_scas()
-{
-	scratch2_uint = seg_override_en ? seg_override : REG_DS;
-
-	if ((scratch_uint = rep_override_en ? regs16[REG_CX] : 1))
-	{
-		for (; scratch_uint; rep_override_en || scratch_uint--)
-		{
-			MEM_OP(extra ? REGS_BASE : SEGREG(scratch2_uint, REG_SI,), -, SEGREG(REG_ES, REG_DI,)),
-			extra || INDEX_INC(REG_SI),
-			INDEX_INC(REG_DI), rep_override_en && !(--regs16[REG_CX] && (!op_result == rep_mode)) && (scratch_uint = 0);
-		}
-
-		raw_opcode_id = 92;
-		regs8[FLAG_ZF] = !op_result;
-		set_CF(op_result > op_dest);
-	}
-
-	return 0;
-}
-	
 // Emulator entry point
 int main(int argc, char **argv)
 {
-	// Initialise GDL for graphics output
+	// Initialise SDL
 #ifndef NO_GRAPHICS
-	SDL_Init(SDL_INIT_VIDEO);
+	SDL_Init(SDL_INIT_AUDIO);
+	sdl_audio.callback = audio_callback;
+	SDL_OpenAudio(&sdl_audio, 0);
+	SDL_PauseAudio(0);
 #endif
 
-	// regs16 and reg8 point to F000:0, the start of memory-mapped registers
+	// regs16 and reg8 point to F000:0, the start of memory-mapped registers. CS is initialised to F000
 	regs16 = (unsigned short *)(regs8 = mem + REGS_BASE);
-	// CS is initialised to F000
-	regs16[REG_CS] = REGS_BASE >> 4;
+	regs16[REG_CS] = 0xF000;
+
+	// Trap flag off
+	regs8[FLAG_TF] = 0;
 
 	// Set DL equal to the boot device: 0 for the FD, or 0x80 for the HD. Normally, boot from the FD.
-	// But, if the HD image file is prefixed with @, then boot from the HD.
+	// But, if the HD image file is prefixed with @, then boot from the HD
 	regs8[REG_DL] = ((argc > 3) && (*argv[3] == '@')) ? argv[3]++, 0x80 : 0;
 
 	// Open BIOS (file id disk[2]), floppy disk image (disk[1]), and hard disk image (disk[0]) if specified
@@ -314,30 +278,28 @@ int main(int argc, char **argv)
 	// Load BIOS image into F000:0100, and set IP to 0100
 	read(disk[2], regs8 + (reg_ip = 0x100), 0xFF00);
 
+	// Load instruction decoding helper table vectors
+	for (int i = 0; i < 21; i++)
+		bios_table_lookup[i] = regs8 + regs16[0x81 + i];
+
 	// Instruction execution loop. Terminates if CS:IP = 0:0
 	for (; opcode_stream = mem + 16 * regs16[REG_CS] + reg_ip, opcode_stream != mem;)
 	{
 		// Extract i_w and i_d fields from instruction
-		scratch_int = *opcode_stream;
-		i_w = (i_reg4bit = scratch_int & 7) & 1;
+		i_w = (i_reg4bit = *opcode_stream & 7) & 1;
 		i_d = i_reg4bit / 2 & 1;
 
 		// Convert raw opcode to translated opcode index. This condenses a large number of different encodings of similar
 		// instructions into a much smaller number of distinct functions, which we then execute
-		scratch_int = raw_opcode_id = bios_table_lookup(TABLE_OPCODE_LOOKUP);
-		xlat_opcode_id = bios_table_lookup(TABLE_XLAT_OPCODE);
-		extra = bios_table_lookup(TABLE_XLAT_SUBFUNCTION);
-		i_mod_size = bios_table_lookup(TABLE_I_MOD_SIZE);
+		raw_opcode_id = bios_table_lookup[TABLE_OPCODE_LOOKUP][*opcode_stream];
+		xlat_opcode_id = bios_table_lookup[TABLE_XLAT_OPCODE][raw_opcode_id];
+		extra = bios_table_lookup[TABLE_XLAT_SUBFUNCTION][raw_opcode_id];
+		i_mod_size = bios_table_lookup[TABLE_I_MOD_SIZE][raw_opcode_id];
 
-		scratch_int = io_ports[0x20] = 0;
-
-        // Extract i_data0 and i_mod fields
-		i_data0 = GET_NEXT_OPCODE;
-		i_mod = (i_data0 & 0xFF) >> 6;
-
-		// If i_mod is 1, operand is (usually) 8 bits. Otherwise, it's 16 bits
-		i_data1 = i_mod == 1 ? (char)GET_NEXT_OPCODE : GET_NEXT_OPCODE;
-		i_data2 = i_data1r = GET_NEXT_OPCODE;
+		// Extract instruction data fields
+		i_data0 = CAST(short)opcode_stream[1];
+		i_data1 = CAST(short)opcode_stream[2];
+		i_data2 = i_data1r = CAST(short)opcode_stream[3];
 
 		// seg_override_en and rep_override_en contain number of instructions to hold segment override and REP prefix respectively
 		if (seg_override_en)
@@ -345,149 +307,141 @@ int main(int argc, char **argv)
 		if (rep_override_en)
 			rep_override_en--;
 
-		// i_mod_size > 0 indicates that opcode uses i_rm/i_reg, so decode them
+		// i_mod_size > 0 indicates that opcode uses i_mod/i_rm/i_reg, so decode them
 		if (i_mod_size)
 		{
+			i_mod = (i_data0 & 0xFF) >> 6;
 			i_rm = i_data0 & 7;
 			i_reg = i_data0 / 8 & 7;
 
 			if ((!i_mod && i_rm == 6) || (i_mod == 2))
-				i_data2 = GET_NEXT_OPCODE;
+				i_data2 = CAST(short)opcode_stream[4];
 			else if (i_mod != 1)
 				i_data2 = i_data1;
+			else // If i_mod is 1, operand is (usually) 8 bits rather than 16 bits
+				i_data1 = (char)i_data1;
 
 			DECODE_RM_REG;
 		}
 
-		(
-			// PIT channel 0 data port - decrement timer
-			--io_ports[0x40]
-
-			// Instruction execution unit
-			NEXT_OPCODE_CHAIN // Conditional jump (JAE, JNAE, etc.)
+		// Instruction execution unit
+		switch (xlat_opcode_id)
+		{
+			OPCODE_CHAIN 0: // Conditional jump (JAE, JNAE, etc.)
 				// i_w is the invert flag, e.g. i_w == 1 means JNAE, whereas i_w == 0 means JAE 
-				scratch_int = *opcode_stream / 2 & 7,
-				reg_ip += (char)i_data0 * (i_w ^ (regs8[bios_table_lookup(TABLE_COND_JUMP_DECODE_A)] || regs8[bios_table_lookup(TABLE_COND_JUMP_DECODE_B)] || regs8[bios_table_lookup(TABLE_COND_JUMP_DECODE_C)] ^ regs8[bios_table_lookup(TABLE_COND_JUMP_DECODE_D)]))
-			NEXT_OPCODE // MOV reg, imm
-				i_w = !!(*opcode_stream & 8),
+				scratch_uchar = *opcode_stream / 2 & 7;
+				reg_ip += (char)i_data0 * (i_w ^ (regs8[bios_table_lookup[TABLE_COND_JUMP_DECODE_A][scratch_uchar]] || regs8[bios_table_lookup[TABLE_COND_JUMP_DECODE_B][scratch_uchar]] || regs8[bios_table_lookup[TABLE_COND_JUMP_DECODE_C][scratch_uchar]] ^ regs8[bios_table_lookup[TABLE_COND_JUMP_DECODE_D][scratch_uchar]]))
+			OPCODE 1: // MOV reg, imm
+				i_w = !!(*opcode_stream & 8);
 				R_M_OP(mem[GET_REG_ADDR(i_reg4bit)], =, i_data0)
-			NEXT_OPCODE // INC|DEC reg16
-				i_w = 1,
-				i_d = 0,
-				xlat_opcode_id += 3,
-				i_reg = i_reg4bit,
-				DECODE_RM_REG,
-				i_reg = extra
-			// Previous block modifies xlat_opcode_id to run more code below. When we do this, the next line needs to be
-			// NEXT_OPCODE_CHAIN instead of NEXT_OPCODE to continue instruction execution.
-			NEXT_OPCODE_CHAIN // PUSH reg16
+			OPCODE 3: // PUSH regs16
 				R_M_PUSH(regs16[i_reg4bit])
-			NEXT_OPCODE // POP reg16
+			OPCODE 4: // POP regs16
 				R_M_POP(regs16[i_reg4bit])
-			NEXT_OPCODE // INC|DEC|JMP|CALL|PUSH
-				i_reg < 2 ? // INC|DEC
+			OPCODE 2: // INC|DEC regs16
+				i_w = 1;
+				i_d = 0;
+				i_reg = i_reg4bit;
+				DECODE_RM_REG;
+				i_reg = extra
+			OPCODE_CHAIN 5: // INC|DEC|JMP|CALL|PUSH
+				if (i_reg < 2) // INC|DEC
 					MEM_OP(op_from_addr, += 1 - 2 * i_reg +, REGS_BASE + 2 * REG_ZERO),
 					op_source = 1,
 					set_AF_OF_arith(),
 					set_OF(op_dest + 1 - i_reg == 1 << (TOP_BIT - 1)),
-					raw_opcode_id = raw_opcode_id & 4 ? 19 : 57
-				:
-					i_reg != 6 ? // JMP|CALL
-						IP_RM_SIZE + 2,
-						i_reg - 3 || R_M_PUSH(regs16[REG_CS]), // CALL (far)
-						i_reg & 2 && R_M_PUSH(reg_ip), // CALL (near or far)
-						i_reg & 1 && MEM_OP(REGS_BASE + 2 * REG_CS, =, op_from_addr + 2), // JMP|CALL (far)
-						R_M_OP(reg_ip, =, op_from_addr[mem]),
-						raw_opcode_id = 67 // Funge so we don't subsequently adjust IP by the instruction length
-					:
-						R_M_PUSH(mem[rm_addr]) // PUSH
-			NEXT_OPCODE // TEST r/m, imm16 / NOT|NEG|MUL|IMUL|DIV|IDIV reg
-			(
-				op_to_addr = op_from_addr
+					raw_opcode_id = raw_opcode_id & 4 ? 19 : 57;
+				else if (i_reg != 6) // JMP|CALL
+					IP_RM_SIZE + 2,
+					i_reg - 3 || R_M_PUSH(regs16[REG_CS]), // CALL (far)
+					i_reg & 2 && R_M_PUSH(reg_ip), // CALL (near or far)
+					i_reg & 1 && MEM_OP(REGS_BASE + 2 * REG_CS, =, op_from_addr + 2), // JMP|CALL (far)
+					R_M_OP(reg_ip, =, op_from_addr[mem]),
+					raw_opcode_id = 67; // Funge so we don't subsequently adjust IP by the instruction length
+				else // PUSH
+					R_M_PUSH(mem[rm_addr])
+			OPCODE 6: // TEST r/m, imm16 / NOT|NEG|MUL|IMUL|DIV|IDIV reg
+				op_to_addr = op_from_addr;
 
-				NEXT_OPCODE_SUBFUNCTION // TEST
-					raw_opcode_id = extra,
-					reg_ip += i_w + 1,
-					R_M_OP(op_to_addr[mem], &, i_data2)
-				NEXT_OPCODE_SUBFUNCTION 0 // Unused on 8086
-				NEXT_OPCODE_SUBFUNCTION // NOT
-					OP(=~)
-				NEXT_OPCODE_SUBFUNCTION // NEG
-					OP(=-),
-					op_dest = 0,
-					raw_opcode_id = 22, // Funge to set flags like SUB
-					set_CF(op_result > op_dest)
-				NEXT_OPCODE_SUBFUNCTION // MUL
-				    i_w ? MUL_MACRO(unsigned short, regs16) : MUL_MACRO(unsigned char, regs8)
-				NEXT_OPCODE_SUBFUNCTION // IMUL
-				    i_w ? MUL_MACRO(short, regs16) : MUL_MACRO(char, regs8)
-				NEXT_OPCODE_SUBFUNCTION // DIV
-					i_w ? DIV_MACRO(unsigned short, unsigned, regs16) : DIV_MACRO(unsigned char, unsigned short, regs8)
-				NEXT_OPCODE_SUBFUNCTION // IDIV
-					i_w ? DIV_MACRO(short, int, regs16) : DIV_MACRO(char, short, regs8)
-			)
-			NEXT_OPCODE // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP AL/AX, immed
-				++xlat_opcode_id,
-				rm_addr = REGS_BASE,
-				i_data2 = i_data0,
-				i_mod = 3,
-				i_reg = extra,
-				reg_ip--
-			NEXT_OPCODE_CHAIN // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP reg, immed
-				++xlat_opcode_id, // Pass to next NEXT_OPCODE block
-				op_to_addr = rm_addr,
-				regs16[REG_SCRATCH] = (i_d |= !i_w) ? (char)i_data2 : i_data2,
-				op_from_addr = REGS_BASE + 2 * REG_SCRATCH,
-				reg_ip += !i_d + 1,
-				raw_opcode_id = 17 + (extra = i_reg)
-			NEXT_OPCODE_CHAIN // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP|MOV reg, r/m
-			(
-				i_reg = extra
-
-				NEXT_OPCODE_SUBFUNCTION // ADD
-					OP(+=),
-					set_CF(op_result < op_dest)
-				NEXT_OPCODE_SUBFUNCTION // OR
-					OP(|=)
-				NEXT_OPCODE_SUBFUNCTION // ADC
-					ADC_SBB_MACRO(+)
-				NEXT_OPCODE_SUBFUNCTION // SBB
-					ADC_SBB_MACRO(-)
-				NEXT_OPCODE_SUBFUNCTION // AND
-					OP(&=)
-				NEXT_OPCODE_SUBFUNCTION // SUB
-					OP(-=),
-					set_CF(op_result > op_dest)
-				NEXT_OPCODE_SUBFUNCTION // XOR
-					OP(^=)
-				NEXT_OPCODE_SUBFUNCTION // CMP
-					OP(-),
-					set_CF(op_result > op_dest)
-				NEXT_OPCODE_SUBFUNCTION // MOV
-					OP(=)
-			)
-			NEXT_OPCODE // MOV sreg, r/m | POP r/m | LEA reg, r/m
-				!i_w ? // MOV
+				switch (i_reg)
+				{
+					OPCODE_CHAIN 0: // TEST
+						raw_opcode_id = extra;
+						reg_ip += i_w + 1;
+						R_M_OP(op_to_addr[mem], &, i_data2)
+					OPCODE 2: // NOT
+						OP(=~)
+					OPCODE 3: // NEG
+						OP(=-);
+						op_dest = 0;
+						raw_opcode_id = 22; // Funge to set flags like SUB
+						set_CF(op_result > op_dest)
+					OPCODE 4: // MUL
+						i_w ? MUL_MACRO(unsigned short, regs16) : MUL_MACRO(unsigned char, regs8)
+					OPCODE 5: // IMUL
+						i_w ? MUL_MACRO(short, regs16) : MUL_MACRO(char, regs8)
+					OPCODE 6: // DIV
+						i_w ? DIV_MACRO(unsigned short, unsigned, regs16) : DIV_MACRO(unsigned char, unsigned short, regs8)
+					OPCODE 7: // IDIV
+						i_w ? DIV_MACRO(short, int, regs16) : DIV_MACRO(char, short, regs8);
+				}
+			OPCODE 7: // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP AL/AX, immed
+				rm_addr = REGS_BASE;
+				i_data2 = i_data0;
+				i_mod = 3;
+				i_reg = extra;
+				reg_ip--;
+			OPCODE_CHAIN 8: // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP reg, immed
+				op_to_addr = rm_addr;
+				regs16[REG_SCRATCH] = (i_d |= !i_w) ? (char)i_data2 : i_data2;
+				op_from_addr = REGS_BASE + 2 * REG_SCRATCH;
+				reg_ip += !i_d + 1;
+				raw_opcode_id = 17 + (extra = i_reg);
+			OPCODE_CHAIN 9: // ADD|OR|ADC|SBB|AND|SUB|XOR|CMP|MOV reg, r/m
+				switch (extra)
+				{
+					OPCODE_CHAIN 0: // ADD
+						OP(+=),
+						set_CF(op_result < op_dest)
+					OPCODE 1: // OR
+						OP(|=)
+					OPCODE 2: // ADC
+						ADC_SBB_MACRO(+)
+					OPCODE 3: // SBB
+						ADC_SBB_MACRO(-)
+					OPCODE 4: // AND
+						OP(&=)
+					OPCODE 5: // SUB
+						OP(-=),
+						set_CF(op_result > op_dest)
+					OPCODE 6: // XOR
+						OP(^=)
+					OPCODE 7: // CMP
+						OP(-),
+						set_CF(op_result > op_dest)
+					OPCODE 8: // MOV
+						OP(=);
+				}
+			OPCODE 10: // MOV sreg, r/m | POP r/m | LEA reg, r/m
+				if (!i_w) // MOV
 					i_w = 1,
 					i_reg += 8,
 					DECODE_RM_REG,
-					OP(=)
-				:
-					!i_d ? // LEA
-						seg_override_en = 1,
-						seg_override = REG_ZERO,
-						DECODE_RM_REG,
-						R_M_OP(mem[scratch_uint], =, rm_addr)
-					: // POP
-						R_M_POP(mem[rm_addr])
-			NEXT_OPCODE // MOV AL/AX, [loc]
-				i_mod = i_reg = 0,
-				i_rm = 6,
-				i_data1 = i_data0,
-				DECODE_RM_REG,
+					OP(=);
+				else if (!i_d) // LEA
+					seg_override_en = 1,
+					seg_override = REG_ZERO,
+					DECODE_RM_REG,
+					R_M_OP(mem[scratch_uint], =, rm_addr);
+				else // POP
+					R_M_POP(mem[rm_addr])
+			OPCODE 11: // MOV AL/AX, [loc]
+				i_mod = i_reg = 0;
+				i_rm = 6;
+				i_data1 = i_data0;
+				DECODE_RM_REG;
 				MEM_OP(op_from_addr, =, op_to_addr)
-			NEXT_OPCODE // ROL|ROR|RCL|RCR|SHL|SHR|???|SAR reg/mem, 1/CL/imm (80186)
-			(
+			OPCODE 12: // ROL|ROR|RCL|RCR|SHL|SHR|???|SAR reg/mem, 1/CL/imm (80186)
 				scratch2_uint = SIGN_OF(mem[rm_addr]),
 				scratch_uint = extra ? // xxx reg/mem, imm
 					++reg_ip,
@@ -496,251 +450,289 @@ int main(int argc, char **argv)
 					i_d
 						? 31 & regs8[REG_CL]
 				: // xxx reg/mem, 1
-					1
-			) &&
-			(
-				i_reg < 4 ? // Rotate operations
+					1;
+				if (scratch_uint)
+				{
+					if (i_reg < 4) // Rotate operations
 						scratch_uint %= i_reg / 2 + TOP_BIT,
-						R_M_OP(scratch2_uint, =, mem[rm_addr])
-					: 0,
-				i_reg & 1 ? // Rotate/shift right operations
-					R_M_OP(mem[rm_addr], >>=, scratch_uint)
-				: // Rotate/shift left operations
-					R_M_OP(mem[rm_addr], <<=, scratch_uint),
-				i_reg > 3 ? // Funge opcode ID to set SZP flags like an arithmetic operation
-					raw_opcode_id = 19
-				: 0,
-				i_reg < 5 ? // Rotate operations or SHL
-					0
-				: // SHR and SAR
-					set_CF(op_dest >> (scratch_uint - 1) & 1)
+						R_M_OP(scratch2_uint, =, mem[rm_addr]);
+					if (i_reg & 1) // Rotate/shift right operations
+						R_M_OP(mem[rm_addr], >>=, scratch_uint);
+					else // Rotate/shift left operations
+						R_M_OP(mem[rm_addr], <<=, scratch_uint);
+					if (i_reg > 3) // Funge opcode ID to set SZP flags like an arithmetic operation
+						raw_opcode_id = 19;
+					if (i_reg > 4) // SHR or SAR
+						set_CF(op_dest >> (scratch_uint - 1) & 1);
+				}
 
-				NEXT_OPCODE_SUBFUNCTION // ROL
-					R_M_OP(mem[rm_addr], += , scratch2_uint >> (TOP_BIT - scratch_uint)),
-					set_OF(SIGN_OF(op_result) ^ set_CF(op_result & 1))
-				NEXT_OPCODE_SUBFUNCTION // ROR
-					scratch2_uint &= (1 << scratch_uint) - 1,
-					R_M_OP(mem[rm_addr], += , scratch2_uint << (TOP_BIT - scratch_uint)),
-					set_OF(SIGN_OF(op_result * 2) ^ set_CF(SIGN_OF(op_result)))
-				NEXT_OPCODE_SUBFUNCTION // RCL
-					R_M_OP(mem[rm_addr], += (regs8[FLAG_CF] << (scratch_uint - 1)) + , scratch2_uint >> (1 + TOP_BIT - scratch_uint)),
-					set_OF(SIGN_OF(op_result) ^ set_CF(scratch2_uint & 1 << (TOP_BIT - scratch_uint)))
-				NEXT_OPCODE_SUBFUNCTION // RCR
-					R_M_OP(mem[rm_addr], += (regs8[FLAG_CF] << (TOP_BIT - scratch_uint)) + , scratch2_uint << (1 + TOP_BIT - scratch_uint)),
-					set_CF(scratch2_uint & 1 << (scratch_uint - 1)),
-					set_OF(SIGN_OF(op_result) ^ SIGN_OF(op_result * 2))
-				NEXT_OPCODE_SUBFUNCTION // SHL
-					set_OF(SIGN_OF(op_result) ^ set_CF(SIGN_OF(op_dest << (scratch_uint - 1))))
-				NEXT_OPCODE_SUBFUNCTION // SHR
-					set_OF(SIGN_OF(op_dest))
-				NEXT_OPCODE_SUBFUNCTION 0 // Unused on 8086
-				NEXT_OPCODE_SUBFUNCTION // SAR
-					scratch_uint < TOP_BIT || set_CF(scratch2_uint),
-					set_OF(0),
-					R_M_OP(mem[rm_addr], +=, scratch2_uint *= ~(((1 << TOP_BIT) - 1) >> scratch_uint))
-			)
-			NEXT_OPCODE // LOOPxx|JCZX
-			(
-				i_reg = i_reg4bit,
-				scratch_uint = !!--regs16[REG_CX]
+				switch (i_reg)
+				{
+					OPCODE_CHAIN 0: // ROL
+						R_M_OP(mem[rm_addr], += , scratch2_uint >> (TOP_BIT - scratch_uint));
+						set_OF(SIGN_OF(op_result) ^ set_CF(op_result & 1))
+					OPCODE 1: // ROR
+						scratch2_uint &= (1 << scratch_uint) - 1,
+						R_M_OP(mem[rm_addr], += , scratch2_uint << (TOP_BIT - scratch_uint));
+						set_OF(SIGN_OF(op_result * 2) ^ set_CF(SIGN_OF(op_result)))
+					OPCODE 2: // RCL
+						R_M_OP(mem[rm_addr], += (regs8[FLAG_CF] << (scratch_uint - 1)) + , scratch2_uint >> (1 + TOP_BIT - scratch_uint));
+						set_OF(SIGN_OF(op_result) ^ set_CF(scratch2_uint & 1 << (TOP_BIT - scratch_uint)))
+					OPCODE 3: // RCR
+						R_M_OP(mem[rm_addr], += (regs8[FLAG_CF] << (TOP_BIT - scratch_uint)) + , scratch2_uint << (1 + TOP_BIT - scratch_uint));
+						set_CF(scratch2_uint & 1 << (scratch_uint - 1));
+						set_OF(SIGN_OF(op_result) ^ SIGN_OF(op_result * 2))
+					OPCODE 4: // SHL
+						set_OF(SIGN_OF(op_result) ^ set_CF(SIGN_OF(op_dest << (scratch_uint - 1))))
+					OPCODE 5: // SHR
+						set_OF(SIGN_OF(op_dest))
+					OPCODE 7: // SAR
+						scratch_uint < TOP_BIT || set_CF(scratch2_uint);
+						set_OF(0);
+						R_M_OP(mem[rm_addr], +=, scratch2_uint *= ~(((1 << TOP_BIT) - 1) >> scratch_uint));
+				}
+			OPCODE 13: // LOOPxx|JCZX
+				scratch_uint = !!--regs16[REG_CX];
 
-				NEXT_OPCODE_SUBFUNCTION  // LOOPNZ
-					scratch_uint &= !regs8[FLAG_ZF]
-				NEXT_OPCODE_SUBFUNCTION // LOOPZ
-					scratch_uint &= regs8[FLAG_ZF]
-				NEXT_OPCODE_SUBFUNCTION // LOOP
-					0
-				NEXT_OPCODE_SUBFUNCTION // JCXXZ
-					scratch_uint = !++regs16[REG_CX]
-			),
-			reg_ip += scratch_uint*(char)i_data0
-			NEXT_OPCODE // JMP | CALL short/near
-				reg_ip += 3 - i_d,
-				i_w ||
-                (
-					i_d ? // JMP far
+				switch(i_reg4bit)
+				{
+					OPCODE_CHAIN 0: // LOOPNZ
+						scratch_uint &= !regs8[FLAG_ZF]
+					OPCODE 1: // LOOPZ
+						scratch_uint &= regs8[FLAG_ZF]
+					OPCODE 3: // JCXXZ
+						scratch_uint = !++regs16[REG_CX];
+				}
+				reg_ip += scratch_uint*(char)i_data0
+			OPCODE 14: // JMP | CALL short/near
+				reg_ip += 3 - i_d;
+				if (!i_w)
+				{
+					if (i_d) // JMP far
 						reg_ip = 0,
-						regs16[REG_CS] = i_data1r
-					: R_M_PUSH(reg_ip) // CALL
-                ),
-				reg_ip += i_d*i_w ? (char)i_data0 : i_data0
-			NEXT_OPCODE // TEST reg, r/m
+						regs16[REG_CS] = i_data1r;
+					else // CALL
+						R_M_PUSH(reg_ip);
+				}
+				reg_ip += i_d && i_w ? (char)i_data0 : i_data0
+			OPCODE 15: // TEST reg, r/m
 				MEM_OP(op_from_addr, &, op_to_addr)
-			NEXT_OPCODE // XCHG AX, reg16
-				i_w = 1,
-				xlat_opcode_id += 8,
-				op_to_addr = REGS_BASE,
-				op_from_addr = GET_REG_ADDR(i_reg4bit)
-			NEXT_OPCODE_CHAIN // MOVSx|STOSx|LODSx
-				movs_stos_lods()
-			NEXT_OPCODE // CMPSx|SCASx
-				cmps_scas()
-			NEXT_OPCODE // RET|RETF|IRET
-				i_d = i_w,
-				R_M_POP(reg_ip),
-				extra && // RETF|RETF imm16
-					R_M_POP(regs16[REG_CS]),
-				extra & 2 ? // IRET
-					set_flags(R_M_POP(scratch_uint))
-				: // RET | RETF imm16
-					i_d || (regs16[REG_SP] += i_data0)
-			NEXT_OPCODE // MOV r/m, immed
-				R_M_OP(op_from_addr[mem], =, i_data2)
-			NEXT_OPCODE // IN AL/AX, DX/imm8
-				io_ports[0x3DA] ^= 9,
-				scratch_uint = extra ? regs16[REG_DX] : (unsigned char)i_data0,
-				scratch_uint == 0x3D5 && io_ports[0x3D4] == 15 && (io_ports[0x3D5] = (mem[0x49E]*80 + mem[0x49D]) & 0xFF), // CRT cursor position (low byte)
-				scratch_uint == 0x3D5 && io_ports[0x3D4] == 14 && (io_ports[0x3D5] = ((mem[0x49E]*80 + mem[0x49D]) & 0xFF00) >> 8),  // " (high byte)
-				R_M_OP(regs8[REG_AL], =, io_ports[scratch_uint])
-			NEXT_OPCODE // OUT DX/imm8, AL/AX
-				scratch_uint = extra ? regs16[REG_DX] : (unsigned char)i_data0,
-				R_M_OP(io_ports[scratch_uint], =, regs8[REG_AL]),
-				scratch_uint == 0x3D5 && io_ports[0x3D4] == 15 && (scratch2_uint = ((mem[0x49E]*80 + mem[0x49D]) & 0xFF00) + regs8[REG_AL], mem[0x49D] = scratch2_uint % 80, mem[0x49E] = scratch2_uint / 80), // CRT cursor position (low byte)
-				scratch_uint == 0x3D5 && io_ports[0x3D4] == 14 && (scratch2_uint = ((mem[0x49E]*80 + mem[0x49D]) & 0xFF) + (regs8[REG_AL] << 8), mem[0x49D] = scratch2_uint % 80, mem[0x49E] = scratch2_uint / 80), // " (high byte)
-				scratch_uint == 0x3B5 && io_ports[0x3B4] == 1 && (GRAPHICS_X = regs8[REG_AL] * 16), // Hercules resolution reprogramming. Defaults are set in the BIOS
-				scratch_uint == 0x3B5 && io_ports[0x3B4] == 6 && (GRAPHICS_Y = regs8[REG_AL] * 4)
-			NEXT_OPCODE // REPxx
-				rep_override_en = 2,
-				rep_mode = i_w,
-				seg_override_en && seg_override_en++
-			NEXT_OPCODE // NOP|XCHG reg, r/m
-				op_to_addr != op_from_addr ?
+			OPCODE 16: // XCHG AX, regs16
+				i_w = 1;
+				op_to_addr = REGS_BASE;
+				op_from_addr = GET_REG_ADDR(i_reg4bit);
+			OPCODE_CHAIN 24: // NOP|XCHG reg, r/m
+				if (op_to_addr != op_from_addr)
 					OP(^=),
 					MEM_OP(op_from_addr, ^=, op_to_addr),
 					OP(^=)
-				: 0
-			NEXT_OPCODE // PUSH reg
+			OPCODE 17: // MOVSx (extra=0)|STOSx (extra=1)|LODSx (extra=2)
+				scratch2_uint = seg_override_en ? seg_override : REG_DS;
+
+				for (scratch_uint = rep_override_en ? regs16[REG_CX] : 1; scratch_uint; scratch_uint--)
+				{
+					MEM_OP(extra < 2 ? SEGREG(REG_ES, REG_DI,) : REGS_BASE, =, extra & 1 ? REGS_BASE : SEGREG(scratch2_uint, REG_SI,)),
+					extra & 1 || INDEX_INC(REG_SI),
+					extra & 2 || INDEX_INC(REG_DI);
+				}
+
+				if (rep_override_en)
+					regs16[REG_CX] = 0
+			OPCODE 18: // CMPSx (extra=0)|SCASx (extra=1)
+				scratch2_uint = seg_override_en ? seg_override : REG_DS;
+
+				if ((scratch_uint = rep_override_en ? regs16[REG_CX] : 1))
+				{
+					for (; scratch_uint; rep_override_en || scratch_uint--)
+					{
+						MEM_OP(extra ? REGS_BASE : SEGREG(scratch2_uint, REG_SI,), -, SEGREG(REG_ES, REG_DI,)),
+						extra || INDEX_INC(REG_SI),
+						INDEX_INC(REG_DI), rep_override_en && !(--regs16[REG_CX] && (!op_result == rep_mode)) && (scratch_uint = 0);
+					}
+
+					raw_opcode_id = 92;
+					regs8[FLAG_ZF] = !op_result;
+					set_CF(op_result > op_dest);
+				}
+			OPCODE 19: // RET|RETF|IRET
+				i_d = i_w;
+				R_M_POP(reg_ip);
+				if (extra) // RETF|RETF imm16
+					R_M_POP(regs16[REG_CS]);
+				if (extra & 2) // IRET
+					set_flags(R_M_POP(scratch_uint));
+				else if (!i_d) // RET | RETF imm16
+					regs16[REG_SP] += i_data0
+			OPCODE 20: // MOV r/m, immed
+				R_M_OP(op_from_addr[mem], =, i_data2)
+			OPCODE 21: // IN AL/AX, DX/imm8
+				io_ports[0x3DA] ^= 9;
+				io_ports[0x20] = 0; // PIC EOI
+				--io_ports[0x40]; // PIT channel 0 read placeholder
+				scratch_uint = extra ? regs16[REG_DX] : (unsigned char)i_data0;
+				scratch_uint == 0x60 && (io_ports[0x64] = 0); // Scancode read flag
+				scratch_uint == 0x3D5 && (io_ports[0x3D4] >> 1 == 7) && (io_ports[0x3D5] = ((mem[0x49E]*80 + mem[0x49D]) & (io_ports[0x3D4] & 1 ? 0xFF : 0xFF00)) >> (io_ports[0x3D4] & 1 ? 0 : 8)); // CRT cursor position
+				R_M_OP(regs8[REG_AL], =, io_ports[scratch_uint]);
+			OPCODE 22: // OUT DX/imm8, AL/AX
+				scratch_uint = extra ? regs16[REG_DX] : (unsigned char)i_data0;
+				R_M_OP(io_ports[scratch_uint], =, regs8[REG_AL]);
+				scratch_uint == 0x61 && (io_hi_lo = 0); // Speaker control
+				(scratch_uint == 0x40 || scratch_uint == 0x42) && (io_ports[0x43] & 6) && (mem[0x469 + scratch_uint - (io_hi_lo ^= 1)] = regs8[REG_AL]); // PIT rate programming
+				scratch_uint == 0x43 && (io_hi_lo = 0, regs8[REG_AL] >> 6 == 2) && (spkr_mode = regs8[REG_AL] & 0xF7); // Speaker mode
+				scratch_uint == 0x3D5 && (io_ports[0x3D4] >> 1 == 7) && (scratch2_uint = ((mem[0x49E]*80 + mem[0x49D]) & (io_ports[0x3D4] & 1 ? 0xFF00 : 0xFF)) + (regs8[REG_AL] << (io_ports[0x3D4] & 1 ? 0 : 8)), mem[0x49D] = scratch2_uint % 80, mem[0x49E] = scratch2_uint / 80); // CRT cursor position
+				scratch_uint == 0x3B5 && io_ports[0x3B4] == 1 && (GRAPHICS_X = regs8[REG_AL] * 16); // Hercules resolution reprogramming. Defaults are set in the BIOS
+				scratch_uint == 0x3B5 && io_ports[0x3B4] == 6 && (GRAPHICS_Y = regs8[REG_AL] * 4)
+			OPCODE 23: // REPxx
+				rep_override_en = 2;
+				rep_mode = i_w;
+				seg_override_en && seg_override_en++
+			OPCODE 25: // PUSH reg
 				R_M_PUSH(regs16[extra])
-			NEXT_OPCODE // POP reg
+			OPCODE 26: // POP reg
 				R_M_POP(regs16[extra])
-			NEXT_OPCODE // xS: segment overrides
-				seg_override_en = 2,
-				seg_override = extra,
+			OPCODE 27: // xS: segment overrides
+				seg_override_en = 2;
+				seg_override = extra;
 				rep_override_en && rep_override_en++
-			NEXT_OPCODE // DAA/DAS
-				i_w = 0,
+			OPCODE 28: // DAA/DAS
+				i_w = 0;
 				extra ? DAA_DAS(-=, >=, 0xFF, 0x99) : DAA_DAS(+=, <, 0xF0, 0x90) // extra = 0 for DAA, 1 for DAS
-			NEXT_OPCODE // AAA/AAS
+			OPCODE 29: // AAA/AAS
 				op_result = AAA_AAS(extra - 1)
-			NEXT_OPCODE // CBW
+			OPCODE 30: // CBW
 				regs8[REG_AH] = -SIGN_OF(regs8[REG_AL])
-			NEXT_OPCODE // CWD
+			OPCODE 31: // CWD
 				regs16[REG_DX] = -SIGN_OF(regs16[REG_AX])
-			NEXT_OPCODE // CALL FAR imm16:imm16
-				R_M_PUSH(regs16[REG_CS]),
-				R_M_PUSH(reg_ip + 5),
-				regs16[REG_CS] = i_data1r,
+			OPCODE 32: // CALL FAR imm16:imm16
+				R_M_PUSH(regs16[REG_CS]);
+				R_M_PUSH(reg_ip + 5);
+				regs16[REG_CS] = i_data1r;
 				reg_ip = i_data0
-			NEXT_OPCODE // PUSHF
-				make_flags(),
+			OPCODE 33: // PUSHF
+				make_flags();
 				R_M_PUSH(scratch_uint)
-			NEXT_OPCODE // POPF
+			OPCODE 34: // POPF
 				set_flags(R_M_POP(scratch_uint))
-			NEXT_OPCODE // SAHF
-				make_flags(),
+			OPCODE 35: // SAHF
+				make_flags();
 				set_flags((scratch_uint & 0xFF00) + regs8[REG_AH])
-			NEXT_OPCODE // LAHF
+			OPCODE 36: // LAHF
 				make_flags(),
 				regs8[REG_AH] = scratch_uint
-			NEXT_OPCODE // LES|LDS reg, r/m
-				i_w = i_d = 1,
-				DECODE_RM_REG,
-				OP(=),
+			OPCODE 37: // LES|LDS reg, r/m
+				i_w = i_d = 1;
+				DECODE_RM_REG;
+				OP(=);
 				MEM_OP(REGS_BASE + extra, =, rm_addr + 2)
-			NEXT_OPCODE // INT 3
-				++reg_ip,
+			OPCODE 38: // INT 3
+				++reg_ip;
 				pc_interrupt(3)
-			NEXT_OPCODE // INT imm8
-				reg_ip += 2,
+			OPCODE 39: // INT imm8
+				reg_ip += 2;
 				pc_interrupt(i_data0 & 0xFF)
-			NEXT_OPCODE // INTO
-				++reg_ip,
+			OPCODE 40: // INTO
+				++reg_ip;
 				regs8[FLAG_OF] &&
 					pc_interrupt(4)
-			NEXT_OPCODE // AAM
-				(i_data0 &= 0xFF) ?
+			OPCODE 41: // AAM
+				if (i_data0 &= 0xFF)
 					regs8[REG_AH] = regs8[REG_AL] / i_data0,
-					op_result = regs8[REG_AL] %= i_data0
-				: // Divide by zero
+					op_result = regs8[REG_AL] %= i_data0;
+				else // Divide by zero
 					pc_interrupt(0)
-			NEXT_OPCODE // AAD
-				i_w = 0,
+			OPCODE 42: // AAD
+				i_w = 0;
 				regs16[REG_AX] = op_result = 0xFF & regs8[REG_AL] + i_data0 * regs8[REG_AH]
-			NEXT_OPCODE // SALC
+			OPCODE 43: // SALC
 				regs8[REG_AL] = -regs8[FLAG_CF]
-			NEXT_OPCODE // XLAT
+			OPCODE 44: // XLAT
 				regs8[REG_AL] = mem[SEGREG(seg_override_en ? seg_override : REG_DS, REG_BX, regs8[REG_AL] +)]
-			NEXT_OPCODE // CMC
+			OPCODE 45: // CMC
 				regs8[FLAG_CF] ^= 1
-			NEXT_OPCODE // CLC|STC|CLI|STI|CLD|STD
+			OPCODE 46: // CLC|STC|CLI|STI|CLD|STD
 				regs8[extra / 2] = extra & 1
-			NEXT_OPCODE // TEST AL/AX, immed
+			OPCODE 47: // TEST AL/AX, immed
 				R_M_OP(regs8[REG_AL], &, i_data0)
-			NEXT_OPCODE // Emulator-specific 0F xx opcodes
-			(
-				i_reg = i_data0
-
-				NEXT_OPCODE_SUBFUNCTION // PUTCHAR_AL
-					write(1, regs8, 1)
-				NEXT_OPCODE_SUBFUNCTION // GET_RTC
-					time(&clock_buf),
-					memcpy(mem + SEGREG(REG_ES, REG_BX, ), localtime(&clock_buf), sizeof(struct tm))
-			),
-			i_reg < 2 ? // READ_DISK|WRITE_DISK
-				regs8[REG_AL] = ~lseek(scratch_int = disk[regs8[REG_DL]], CAST(unsigned)regs16[REG_BP] << 9, 0) ?
-					(i_reg ? (int(*)())write : (int(*)())read)(scratch_int, mem + SEGREG(REG_ES, REG_BX, ), regs16[REG_AX])
-				: 0
-			: 0
-		);
-
-		scratch_int = raw_opcode_id;
+			OPCODE 48: // Emulator-specific 0F xx opcodes
+				switch ((char)i_data0)
+				{
+					OPCODE_CHAIN 0: // PUTCHAR_AL
+						write(1, regs8, 1)
+					OPCODE 1: // GET_RTC
+						time(&clock_buf);
+						ftime(&ms_clock);
+						memcpy(mem + SEGREG(REG_ES, REG_BX,), localtime(&clock_buf), sizeof(struct tm));
+						CAST(short)mem[SEGREG(REG_ES, REG_BX, 36+)] = ms_clock.millitm;
+					OPCODE 2: // DISK_READ
+					OPCODE_CHAIN 3: // DISK_WRITE
+						regs8[REG_AL] = ~lseek(scratch_int = disk[regs8[REG_DL]], CAST(unsigned)regs16[REG_BP] << 9, 0)
+							? ((char)i_data0 == 3 ? (int(*)())write : (int(*)())read)(scratch_int, mem + SEGREG(REG_ES, REG_BX, ), regs16[REG_AX])
+							: 0;
+				}
+		}
 
 		// Increment instruction pointer by computed instruction length. Tables in the BIOS binary
 		// help us here.
-		IP_RM_SIZE*bios_table_lookup(TABLE_I_MOD_SIZE) + bios_table_lookup(TABLE_BASE_INST_SIZE) + bios_table_lookup(TABLE_I_W_SIZE)*(i_w + 1);
+		IP_RM_SIZE*bios_table_lookup[TABLE_I_MOD_SIZE][raw_opcode_id] + bios_table_lookup[TABLE_BASE_INST_SIZE][raw_opcode_id] + bios_table_lookup[TABLE_I_W_SIZE][raw_opcode_id]*(i_w + 1);
 
 		// If instruction needs to update SF, ZF and PF, set them as appropriate
-		if ((scratch_uint = bios_table_lookup(TABLE_STD_FLAGS)) & FLAGS_UPDATE_SZP)
+		if ((scratch_uint = bios_table_lookup[TABLE_STD_FLAGS][raw_opcode_id]) & FLAGS_UPDATE_SZP)
 		{
-			scratch_int = (unsigned char)op_result;
 			regs8[FLAG_SF] = SIGN_OF(op_result);
 			regs8[FLAG_ZF] = !op_result;
-			regs8[FLAG_PF] = bios_table_lookup(TABLE_PARITY_FLAG);
+			regs8[FLAG_PF] = bios_table_lookup[TABLE_PARITY_FLAG][(unsigned char)op_result];
+
+			// If instruction is an arithmetic or logic operation, also set AF/OF/CF as appropriate.
+			if (scratch_uint & FLAGS_UPDATE_AO_ARITH)
+				set_AF_OF_arith();
+			if (scratch_uint & FLAGS_UPDATE_OC_LOGIC)
+				set_CF(0), set_OF(0);
 		}
 
-		// If instruction is an arithmetic or logic operation, also set AF/OF/CF as appropriate.
-		if (scratch_uint & FLAGS_UPDATE_AO_ARITH)
-			set_AF_OF_arith();
-		if (scratch_uint & FLAGS_UPDATE_OC_LOGIC)
-			set_CF(0), set_OF(0);
-
-		// Update the video graphics display when inst_counter wraps around, i.e. every 64K instructions
-		if (!++inst_counter)
-		{
-			// Set flag to execute an INT 8 as soon as appropriate (see below)
+		// Poll timer/keyboard every KEYBOARD_TIMER_UPDATE_DELAY instructions
+		if (!(++inst_counter % KEYBOARD_TIMER_UPDATE_DELAY))
 			int8_asap = 1;
+
 #ifndef NO_GRAPHICS
+		// Update the video graphics display every GRAPHICS_UPDATE_DELAY instructions
+		if (!(inst_counter % GRAPHICS_UPDATE_DELAY))
+		{
+			// Video card in graphics mode?
 			if (io_ports[0x3B8] & 2)
 			{
-				// Hercules card is in graphics mode. If we don't already have an SDL window open, set it up
-				SDL_PumpEvents();
+				// If we don't already have an SDL window open, set it up
 				if (!sdl_screen)
 				{
-					sdl_screen = SDL_SetVideoMode(GRAPHICS_X, GRAPHICS_Y, 32, 0);
+					for (int i = 0; i < 16; i++)
+					{
+						cga_pixels[i] = cga_colors[(i & 12) >> 2] + (cga_colors[i & 3] << 16); // CGA -> RGB332
+						herc_pixels[i] = 0xFF*(((i & 1) << 24) + ((i & 2) << 15) + ((i & 4) << 6) + ((i & 8) >> 3)); // Hercules -> RGB332
+					}
+					SDL_Init(SDL_INIT_VIDEO);
+					sdl_screen = SDL_SetVideoMode(GRAPHICS_X, GRAPHICS_Y, 8, 0);
 					SDL_EnableUNICODE(1);
 					SDL_EnableKeyRepeat(500, 30);
 				}
 
-				// Update the display from video RAM
-				video_mem_update();
+				// Refresh SDL display from emulated graphics card video RAM
+				scratch_uint = 88 + 4 * (io_ports[0x3B8] / 128); // Video memory bank
+				scratch_int = mem[0x4AC]; // CGA?
+
+				for (int i = 0; i < GRAPHICS_X * GRAPHICS_Y / 4; i++)
+					((unsigned *)sdl_screen->pixels)[i] = scratch_int // CGA or Hercules mode?
+						? cga_pixels[15 & (mem[i / GRAPHICS_X * (GRAPHICS_X / 8) + (i / 2) % (GRAPHICS_X / 8) + 8192*(92 + (2 * i / GRAPHICS_X) % 2)] >> 4*!(i & 1))]
+						: herc_pixels[15 & (mem[i / GRAPHICS_X * (GRAPHICS_X / 8) + (i / 2) % (GRAPHICS_X / 8) + 8192*(scratch_uint + (4 * i / GRAPHICS_X) % 4)] >> 4*!(i & 1))];
+
+				SDL_Flip(sdl_screen);
 			}
 			else if (sdl_screen) // Application has gone back to text mode, so close the SDL window
 			{
-				SDL_Quit();
+				SDL_QuitSubSystem(SDL_INIT_VIDEO);
 				sdl_screen = 0;
 			}
-#endif
+			SDL_PumpEvents();
 		}
+#endif
 
 		// Application has set trap flag, so fire INT 1
 		if (trap_flag)
@@ -748,11 +740,14 @@ int main(int argc, char **argv)
 
 		trap_flag = regs8[FLAG_TF];
 
-		// If an INT 8 is pending, interrupts are enabled, and no overrides/REP are active, then process
-		// the INT 8 and check for new keystrokes from the terminal
+		// If a timer tick is pending, interrupts are enabled, and no overrides/REP are active,
+		// then process the tick and check for new keystrokes from the terminal
 		if (!seg_override_en && !rep_override_en && int8_asap && regs8[FLAG_IF] && !regs8[FLAG_TF])
-			pc_interrupt(8), int8_asap = 0, SDL_KEYBOARD_DRIVER;
+			pc_interrupt(0xA), int8_asap = 0, SDL_KEYBOARD_DRIVER;
 	}
 
+#ifndef NO_GRAPHICS
+	SDL_Quit();
+#endif
 	return 0;
 }
