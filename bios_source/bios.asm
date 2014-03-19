@@ -1,7 +1,7 @@
-; BIOS source for 8086tiny IBM PC emulator (revision 1.20 and above). Compiles with NASM.
+; BIOS source for 8086tiny IBM PC emulator (revision 1.21 and above). Compiles with NASM.
 ; Copyright 2013-14, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 ;
-; Revision 1.60
+; Revision 1.61
 ;
 ; This work is licensed under the MIT License. See included LICENSE.TXT.
 
@@ -47,20 +47,19 @@ main:
 	dw	ex_data		; Table 9: Translation of Raw ID to Extra Data
 	dw	std_flags	; Table 10: How each Raw ID sets the flags (bit 1 = sets SZP, bit 2 = sets AF/OF for arithmetic, bit 3 = sets OF/CF for logic)
 	dw	parity		; Table 11: Parity flag loop-up table (256 entries)
-	dw	i_opcodes	; Table 12: 8-bit opcode lookup table
-	dw	base_size	; Table 13: Translation of Raw ID to base instruction size (bytes)
-	dw	i_w_adder	; Table 14: Translation of Raw ID to i_w size adder yes/no
-	dw	i_mod_adder	; Table 15: Translation of Raw ID to i_mod size adder yes/no
-	dw	jxx_dec_a	; Table 16: Jxx decode table A
-	dw	jxx_dec_b	; Table 17: Jxx decode table B
-	dw	jxx_dec_c	; Table 18: Jxx decode table C
-	dw	jxx_dec_d	; Table 19: Jxx decode table D
-	dw	flags_mult	; Table 20: FLAGS multipliers
+	dw	base_size	; Table 12: Translation of Raw ID to base instruction size (bytes)
+	dw	i_w_adder	; Table 13: Translation of Raw ID to i_w size adder yes/no
+	dw	i_mod_adder	; Table 14: Translation of Raw ID to i_mod size adder yes/no
+	dw	jxx_dec_a	; Table 15: Jxx decode table A
+	dw	jxx_dec_b	; Table 16: Jxx decode table B
+	dw	jxx_dec_c	; Table 17: Jxx decode table C
+	dw	jxx_dec_d	; Table 18: Jxx decode table D
+	dw	flags_mult	; Table 19: FLAGS multipliers
 
 ; These values (BIOS ID string, BIOS date and so forth) go at the very top of memory
 
-biosstr	db	'8086tiny BIOS Revision 1.60!', 0, 0		; Why not?
-mem_top	db	0xea, 0, 0x01, 0, 0xf0, '02/19/14', 0, 0xfe, 0
+biosstr	db	'8086tiny BIOS Revision 1.61!', 0, 0		; Why not?
+mem_top	db	0xea, 0, 0x01, 0, 0xf0, '03/08/14', 0, 0xfe, 0
 
 bios_entry:
 
@@ -271,6 +270,15 @@ boot:	mov	ax, 0
 	mov	ax, 0x0700
 	rep	stosw
 
+; Clear video memory shadow buffer
+
+	mov	ax, 0xc800
+	mov	es, ax
+	mov	di, 0
+	mov	cx, 80*25
+	mov	ax, 0x0700
+	rep	stosw
+
 ; Set up some I/O ports, between 0 and FFF. Most of them we set to 0xFF, to indicate no device present
 
 	mov	dx, 0x61
@@ -367,16 +375,6 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	mov	bx, 0x40	; Set segment to BIOS data area segment (0x40)
 	mov	es, bx
 
-	; Tail of the BIOS keyboard buffer goes in BP. This is where we add new keystrokes
-
-	mov	bp, [es:kbbuf_tail-bios_data]
-
-	; First, copy zero keystroke to BIOS keyboard buffer - if we have an extended code then we
-	; don't translate to a keystroke. If not, then this zero will later be overwritten
-	; with the actual ASCII code of the keystroke.
-
-	mov	byte [es:bp], 0
-
 	; Retrieve the keystroke
 
 	mov	ax, [es:this_keystroke-bios_data]
@@ -397,7 +395,6 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	test	ah, 0x40 ; Key up
 	jz	sdl_check_specials
 
-	; and	ah, 0xBF ; Clear key up
 	mov	byte [cs:last_key_sdl], 2 ; Key up from SDL
 
   sdl_check_specials:
@@ -518,6 +515,7 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 
 	mov	bh, al
 	mov	al, 0
+	mov	byte [es:this_keystroke-bios_data], 0
 	jmp	sdl_scancode_xlat_done
 
   sdl_process_key:
@@ -545,14 +543,9 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	sub	bh, 0x80 ; Key down scancode
 
   sdl_key_down:
-	
-	mov	byte [es:bp], al ; ASCII code
-	mov	byte [es:bp+1], bh ; Scan code
 
-	; ESC keystroke is in the buffer now
-	add	word [es:kbbuf_tail-bios_data], 2
-	call	kb_adjust_buf ; Wrap the tail around the head if the buffer gets too large
-	
+	mov	[es:this_keystroke-bios_data], al
+		
   sdl_not_in_buf:
 
 	mov	al, bh
@@ -596,9 +589,14 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 
   i2_not_fn:
 
-	cmp	byte [es:notranslate_flg-bios_data], 1 ; If no translation mode is on, just pass through the scan code.
+	cmp	byte [es:notranslate_flg-bios_data], 1 ; If no translation mode is on, just pass through the scan code. ASCII key is zero.
 	mov	byte [es:notranslate_flg-bios_data], 0
-	je	after_translate
+	jne	need_to_translate
+
+	mov	byte [es:this_keystroke-bios_data], 0
+	jmp	after_translate
+
+  need_to_translate:
 
 	cmp	al, 0xe0 ; Some OSes return scan codes after 0xE0 for things like cursor moves. So, if we find it, set a flag saying the next code received should not be translated.
 	mov	byte [es:notranslate_flg-bios_data], 1
@@ -615,12 +613,7 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 
 	; Stuff an ESC character
 	
-	mov	byte [es:bp], 0x1b ; ESC ASCII code
-	mov	byte [es:bp+1], 0x01 ; ESC scan code
-
-	; ESC keystroke is in the buffer now
-	add	word [es:kbbuf_tail-bios_data], 2
-	call	kb_adjust_buf ; Wrap the tail around the head if the buffer gets too large
+	mov	byte [es:this_keystroke-bios_data], 0x1b
 
 	mov	al, 0x01
 	call	keypress_release
@@ -642,13 +635,7 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 
 	; It isn't, so stuff an ESC character plus this key
 	
-	mov	byte [es:bp], 0x1b ; ESC ASCII code
-	mov	byte [es:bp+1], 0x01 ; ESC scan code
-
-	; ESC keystroke is in the buffer now
-	add	bp, 2
-	add	word [es:kbbuf_tail-bios_data], 2
-	call	kb_adjust_buf ; Wrap the tail around the head if the buffer gets too large
+	mov	byte [es:this_keystroke-bios_data], 0x1b
 
 	mov	al, 0x01
 	call	keypress_release
@@ -677,6 +664,8 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	sub	al, 'A'
 	mov	bx, unix_cursor_xlt
 	xlat
+
+	mov	byte [es:this_keystroke-bios_data], 0
 	jmp	after_translate
 	
   i2_regular_key:
@@ -737,7 +726,6 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
   i2_n:
 
 	mov	al, [es:this_keystroke-bios_data]
-	mov	[es:bp], al
 
 	mov	bx, a2scan_tbl ; ASCII to scan code table
 	xlat
@@ -745,13 +733,13 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	cmp	byte [es:next_key_fn-bios_data], 1	; Fxx?
 	jne	after_translate
 
-	cmp	byte [es:bp], 1 ; Ctrl+F then Ctrl+A outputs code for Ctrl+A
+	cmp	byte [es:this_keystroke-bios_data], 1 ; Ctrl+F then Ctrl+A outputs code for Ctrl+A
 	je	after_translate
 
-	cmp	byte [es:bp], 6 ; Ctrl+F then Ctrl+F outputs code for Ctrl+F  
+	cmp	byte [es:this_keystroke-bios_data], 6 ; Ctrl+F then Ctrl+F outputs code for Ctrl+F  
 	je	after_translate
 	
-	mov	byte [es:bp], 0	; Fxx key, so zero out ASCII code
+	mov	byte [es:this_keystroke-bios_data], 0	; Fxx key, so zero out ASCII code
 	add	al, 0x39
 
   after_translate:
@@ -759,21 +747,14 @@ int7:	; Whenever the user presses a key, INT 7 is called by the emulator.
 	mov	byte [es:escape_flag-bios_data], 0
 	mov	byte [es:escape_flag_last-bios_data], 0
 
-	; Now, AL contains the scan code of the key. Put it in the buffer
-	mov	[es:bp+1], al
-
-	; New keystroke + scancode is in the buffer now. If the key is actually
-	; an Alt+ key we use an ASCII code of 0 instead of the real value.
+	; If the key is actually an Alt+ key we use an ASCII code of 0 instead of the real value.
 
 	cmp	byte [es:next_key_alt-bios_data], 1
 	jne	skip_ascii_zero
 
-	mov	byte [es:bp], 0
+	mov	byte [es:this_keystroke-bios_data], 0
 
-skip_ascii_zero:
-
-	add	word [es:kbbuf_tail-bios_data], 2
-	call	kb_adjust_buf ; Wrap the tail around the head if the buffer gets too large
+  skip_ascii_zero:
 
 	; Output key down/key up event (scancode in AL) to keyboard port
 	call	keypress_release
@@ -819,6 +800,54 @@ skip_ascii_zero:
 	pop	ax
 	pop	es
 	pop	ds
+	iret
+
+; ************************* INT 9h handler - keyboard (PC BIOS standard)
+
+int9:
+
+	push	es
+	push	ax
+	push	bx
+	push	bp
+
+	in	al, 0x60
+
+	cmp	al, 0x80 ; Key up?
+	jae	no_add_buf
+	cmp	al, 0x36 ; Shift?
+	je	no_add_buf
+	cmp	al, 0x38 ; Alt?
+	je	no_add_buf
+	cmp	al, 0x1d ; Ctrl?
+	je	no_add_buf
+
+	mov	bx, 0x40
+	mov	es, bx
+
+	mov	bh, al
+	mov	al, [es:this_keystroke-bios_data]
+
+	; Tail of the BIOS keyboard buffer goes in BP. This is where we add new keystrokes
+
+	mov	bp, [es:kbbuf_tail-bios_data]
+	mov	byte [es:bp], al ; ASCII code
+	mov	byte [es:bp+1], bh ; Scan code
+
+	; ESC keystroke is in the buffer now
+	add	word [es:kbbuf_tail-bios_data], 2
+	call	kb_adjust_buf ; Wrap the tail around the head if the buffer gets too large
+
+  no_add_buf:
+
+	mov	al, 1
+	out	0x64, al
+
+	pop	bp
+	pop	bx
+	pop	ax
+	pop	es
+
 	iret
 
 ; ************************* INT Ah handler - timer (8086tiny internal)
@@ -873,6 +902,7 @@ inta:
 	mul	bx
 
 	mov	bx, [es:timer0_freq-bios_data]
+
 	cmp	bx, 0 ; 0 actually means FFFF
 	jne	no_adjust_10000
 
@@ -890,7 +920,10 @@ inta:
 
 inta_call_int8:
 
+	push	ax	; Workaround for CPM-86 - INT 1C destroys AX!!
 	int	8
+	pop	ax
+
 	dec	ax
 	cmp	ax, 0
 	jne	inta_call_int8
@@ -932,13 +965,15 @@ i8_stuff_esc:
 	mov	byte [es:escape_flag-bios_data], 0
 	mov	byte [es:escape_flag_last-bios_data], 0
 
-	mov	bp, [es:kbbuf_tail-bios_data]
-	mov	byte [es:bp], 0x1b ; ESC ASCII code
-	mov	byte [es:bp+1], 0x01 ; ESC scan code
+	; mov	bp, [es:kbbuf_tail-bios_data]
+	; mov	byte [es:bp], 0x1b ; ESC ASCII code
+	; mov	byte [es:bp+1], 0x01 ; ESC scan code
 
 	; ESC keystroke is in the buffer now
-	add	word [es:kbbuf_tail-bios_data], 2
-	call	kb_adjust_buf ; Wrap the tail around the head if the buffer gets too large
+	; add	word [es:kbbuf_tail-bios_data], 2
+	; call	kb_adjust_buf ; Wrap the tail around the head if the buffer gets too large
+
+	mov	byte [es:this_keystroke-bios_data], 0x1b
 
 	; Push out ESC keypress/release
 	mov	al, 0x01
@@ -1259,7 +1294,7 @@ int10:
 	cmp	dl, 0x4f ; Clearing columns 0-79
 	jb	cls_partial
 
-	cmp	dl, 0x18 ; Clearing rows 0-24 (or more)
+	cmp	dh, 0x18 ; Clearing rows 0-24 (or more)
 	jb	cls_partial
 
 	call	clear_screen
@@ -1271,6 +1306,12 @@ int10:
 	push	bx
 
 	mov	bl, al		; Number of rows to scroll are now in bl
+	cmp	bl, 0		; Clear whole window?
+	jne	cls_partial_up_whole
+
+	mov	bl, 25		; 25 rows
+
+  cls_partial_up_whole:
 
 	mov	al, 0x1B	; Escape
 	extended_putchar_al
@@ -1323,8 +1364,8 @@ cs_fs_ml_out:
 
 	extended_putchar_al
 
-	pop	ax
 	pop	bx
+	pop	ax
 
 	; Update "actual" cursor position with expected value - different ANSI terminals do different things
 	; to the cursor position when you scroll
@@ -1362,6 +1403,8 @@ int10_scroll_up_vmem_update:
 	push	si
 	push	di
 
+	mov	byte [cs:vram_dirty], 1
+
 	push	bx
 
 	mov	bx, 0xb800
@@ -1369,6 +1412,7 @@ int10_scroll_up_vmem_update:
 	mov	ds, bx
 
 	pop	bx
+	mov	bl, al
 
     cls_vmem_scroll_up_next_line:
 
@@ -1432,14 +1476,14 @@ vmem_scroll_up_copy_next_row:
 
     cls_vmem_scroll_up_done:
 
-	mov	al, 0x1B	; Escape
-	extended_putchar_al
-	mov	al, '['		; ANSI
-	extended_putchar_al
-	mov	al, '0'		; Reset attributes
-	extended_putchar_al
-	mov	al, 'm'
-	extended_putchar_al
+	;mov	al, 0x1B	; Escape
+	;extended_putchar_al
+	;mov	al, '['		; ANSI
+	;extended_putchar_al
+	;mov	al, '0'		; Reset attributes
+	;extended_putchar_al
+	;mov	al, 'm'
+	;extended_putchar_al
 
 	pop	di
 	pop	si
@@ -1490,7 +1534,7 @@ vmem_scroll_up_copy_next_row:
 	cmp	dl, 0x4f ; Clearing columns 0-79
 	jne	cls_partial_down
 
-	cmp	dl, 0x18 ; Clearing rows 0-24 (or more)
+	cmp	dh, 0x18 ; Clearing rows 0-24 (or more)
 	jl	cls_partial_down
 
 	call	clear_screen
@@ -1503,6 +1547,13 @@ vmem_scroll_up_copy_next_row:
 
 	mov	bx, 0
 	mov	bl, al		; Number of rows to scroll are now in bl
+
+	cmp	bl, 0		; Clear whole window?
+	jne	cls_partial_down_whole
+
+	mov	bl, 25		; 25 rows
+
+  cls_partial_down_whole:
 
 	mov	al, 0x1B	; Escape
 	extended_putchar_al
@@ -1538,13 +1589,28 @@ vmem_scroll_up_copy_next_row:
 	extended_putchar_al
 	mov	al, '['		; ANSI
 	extended_putchar_al
+
+	cmp	bl, 1
+	jne	cls_fs_down_multiline
+
+	mov	al, 'D'
+	jmp	cs_fs_down_ml_out
+
+    cls_fs_down_multiline:
+
 	mov	al, bl		; Number of rows
 	call	puts_decimal_al
 	mov	al, 'T'		; Scroll down
+
+    cs_fs_down_ml_out:
+
 	extended_putchar_al
 
 	; Update "actual" cursor position with expected value - different ANSI terminals do different things
 	; to the cursor position when you scroll
+
+	pop	bx
+	pop	ax
 
 	push	ax
 	push	bx
@@ -1569,12 +1635,17 @@ int10_scroll_down_vmem_update:
 
 	; Now, we need to update video memory
 
+	push	ax
+	push	bx
+
 	push	ds
 	push	es
 	push	cx
 	push	dx
 	push	si
 	push	di
+
+	mov	byte [cs:vram_dirty], 1
 
 	push	bx
 
@@ -1583,6 +1654,7 @@ int10_scroll_down_vmem_update:
 	mov	ds, bx
 
 	pop	bx
+	mov	bl, al
 
     cls_vmem_scroll_down_next_line:
 
@@ -1649,14 +1721,14 @@ int10_scroll_down_vmem_update:
 	pop	es
 	pop	ds
 
-	mov	al, 0x1B	; Escape
-	extended_putchar_al
-	mov	al, '['		; ANSI
-	extended_putchar_al
-	mov	al, '0'		; Reset attributes
-	extended_putchar_al
-	mov	al, 'm'
-	extended_putchar_al
+	;mov	al, 0x1B	; Escape
+	;extended_putchar_al
+	;mov	al, '['		; ANSI
+	;extended_putchar_al
+	;mov	al, '0'		; Reset attributes
+	;extended_putchar_al
+	;mov	al, 'm'
+	;extended_putchar_al
 
 	pop	bx
 	pop	ax
@@ -1668,10 +1740,11 @@ int10_scroll_down_vmem_update:
 	; and only works at all if the character has previously been written following
 	; an int 10/ah = 2 call to set the cursor position. Added just to support
 	; GWBASIC.
-	
+
 	push	ds
 	push	es
 	push	bx
+	push	dx
 
 	mov	bx, 0x40
 	mov	es, bx
@@ -1679,13 +1752,21 @@ int10_scroll_down_vmem_update:
 	mov	bx, 0xc000
 	mov	ds, bx
 
-	mov	bx, 0
-	add	bl, [es:curpos_x-bios_data]
-	add	bl, [es:curpos_x-bios_data]
+	mov	bx, 160
+	mov	ax, 0
+	mov	al, [es:curpos_y-bios_data]
+	mul	bx
 
-	mov	ah, 0
+	mov	bx, 0
+	mov	bl, [es:curpos_x-bios_data]
+	add	ax, bx
+	add	ax, bx
+	mov	bx, ax
+
+	mov	ah, 7
 	mov	al, [bx]
 
+	pop	dx
 	pop	bx
 	pop	es
 	pop	ds
@@ -1704,7 +1785,16 @@ int10_scroll_down_vmem_update:
 
 	push	ds
 	push	es
+	push	cx
+	push	dx
+	push	ax
+	push	bp
 	push	bx
+
+	push	ax
+
+	mov	cl, al
+	mov	ch, 7
 
 	mov	bx, 0x40
 	mov	es, bx
@@ -1712,78 +1802,24 @@ int10_scroll_down_vmem_update:
 	mov	bx, 0xc000
 	mov	ds, bx
 
+	mov	bx, 160
+	mov	ax, 0
+	mov	al, [es:curpos_y-bios_data]
+	mul	bx
+
 	mov	bx, 0
 	mov	bl, [es:curpos_x-bios_data]
 	shl	bx, 1
-	mov	[bx], al
+	add	bx, ax
 
-	cmp	al, 0x08
-	jne	int10_write_char_inc_x
-
-	dec	byte [es:curpos_x-bios_data]
-	dec	byte [es:crt_curpos_x-bios_data]
-	cmp	byte [es:curpos_x-bios_data], 0
-	jg	int10_write_char_done
-
-	mov	byte [es:curpos_x-bios_data], 0    
-	mov	byte [es:crt_curpos_x-bios_data], 0    
-	jmp	int10_write_char_done
-
-    int10_write_char_inc_x:
-
-	cmp	al, 0x0A	; New line?
-	je	int10_write_char_newline
-
-	cmp	al, 0x0D	; Carriage return?
-	jne	int10_write_char_not_cr
-
-	mov	byte [es:curpos_x-bios_data],0
-	mov	byte [es:crt_curpos_x-bios_data],0
-	jmp	int10_write_char_done
-
-    int10_write_char_not_cr:
-
-	inc	byte [es:curpos_x-bios_data]
-	inc	byte [es:crt_curpos_x-bios_data]
-	cmp	byte [es:curpos_x-bios_data], 80
-	jge	int10_write_char_newline
-	jmp	int10_write_char_done
-
-    int10_write_char_newline:
-
-	mov	byte [es:curpos_x-bios_data], 0
-	mov	byte [es:crt_curpos_x-bios_data], 0
-	inc	byte [es:curpos_y-bios_data]
-	inc	byte [es:crt_curpos_y-bios_data]
-
-	cmp	byte [es:curpos_y-bios_data], 25
-	jb	int10_write_char_done
-	mov	byte [es:curpos_y-bios_data], 24
-	mov	byte [es:crt_curpos_y-bios_data], 24
-
-	push	cx
-	push	dx
-
-	mov	bx, 0x0701
-	mov	cx, 0
-	mov	dx, 0x184f
-
-	pushf
-	push	cs
-	call	int10_scroll_up_vmem_update
-
-	pop	dx
-	pop	cx
-
-    int10_write_char_done:
-
-	pop	bx
-	pop	es
-	pop	ds
+	mov	[bx], cx
+	
+	pop	ax
+	push	ax
 
 	extended_putchar_al
 
-	iret
+	jmp	int10_write_char_skip_lines
 
   int10_write_char_attrib:
 
@@ -1794,9 +1830,16 @@ int10_scroll_down_vmem_update:
 	push	ds
 	push	es
 	push	cx
+	push	dx
+	push	ax
 	push	bp
 	push	bx
-	push	bx
+
+	push	ax
+	push	cx
+
+	mov	cl, al
+	mov	ch, bl
 
 	mov	bx, 0x40
 	mov	es, bx
@@ -1804,15 +1847,19 @@ int10_scroll_down_vmem_update:
 	mov	bx, 0xc000
 	mov	ds, bx
 
+	mov	bx, 160
+	mov	ax, 0
+	mov	al, [es:curpos_y-bios_data]
+	mul	bx
+
 	mov	bx, 0
 	mov	bl, [es:curpos_x-bios_data]
 	shl	bx, 1
-	mov	[bx], al
+	add	bx, ax
 
-	pop	bx
+	mov	[bx], cx
 
-	push	bx
-	push	ax
+	mov	bl, ch
 
 	mov	bh, bl
 	and	bl, 7		; Foreground colour now in bl
@@ -1836,14 +1883,8 @@ cpu	8086
 	extended_putchar_al
 	mov	al, bl		; Foreground colour
 	call	puts_decimal_al
-	; mov	al, 'm'		; Set cursor position command
-	; extended_putchar_al
 
-	pop	ax
-	pop	bx
-
-	push	bx
-	push	ax
+	mov	bl, ch
 
 	mov	bh, bl
 cpu	186
@@ -1856,23 +1897,18 @@ cpu	8086
 	mov	bl, byte [cs:bp+colour_table]
 
 	add	bl, 10
-	rol	bh, 1
-	and	bh, 1		; Bright attribute now in bh (not used right now)
+	; rol	bh, 1
+	; and	bh, 1		; Bright attribute now in bh (not used right now)
 
 	mov	al, ';'
 	extended_putchar_al
-	; mov	al, 0x1B	; Escape
-	; extended_putchar_al
-	; mov	al, '['		; ANSI
-	; extended_putchar_al
 	mov	al, bl		; Background colour
 	call	puts_decimal_al
 	mov	al, 'm'		; Set cursor position command
 	extended_putchar_al
 	
+	pop	cx
 	pop	ax
-	pop	bx
-
 	push	ax
 
     out_another_char:
@@ -1891,16 +1927,23 @@ cpu	8086
 	mov	al, 'm'
 	extended_putchar_al
 
+    int10_write_char_skip_lines:
+
+	pop	ax
+
+	push	es
+	pop	ds
+
 	cmp	al, 0x08
 	jne	int10_write_char_attrib_inc_x
 
-	dec	byte [es:curpos_x-bios_data]
-	dec	byte [es:crt_curpos_x-bios_data]
-	cmp	byte [es:curpos_x-bios_data], 0
+	dec	byte [curpos_x-bios_data]
+	dec	byte [crt_curpos_x-bios_data]
+	cmp	byte [curpos_x-bios_data], 0
 	jg	int10_write_char_attrib_done
 
-	mov	byte [es:curpos_x-bios_data], 0
-	mov	byte [es:crt_curpos_x-bios_data], 0
+	mov	byte [curpos_x-bios_data], 0
+	mov	byte [crt_curpos_x-bios_data], 0
 	jmp	int10_write_char_attrib_done
 
     int10_write_char_attrib_inc_x:
@@ -1911,34 +1954,32 @@ cpu	8086
 	cmp	al, 0x0D	; Carriage return?
 	jne	int10_write_char_attrib_not_cr
 
-	mov	byte [es:curpos_x-bios_data], 0
-	mov	byte [es:crt_curpos_x-bios_data], 0
+	mov	byte [curpos_x-bios_data], 0
+	mov	byte [crt_curpos_x-bios_data], 0
 	jmp	int10_write_char_attrib_done
 
     int10_write_char_attrib_not_cr:
 
-	inc	byte [es:curpos_x-bios_data]
-	inc	byte [es:crt_curpos_x-bios_data]
-	cmp	byte [es:curpos_x-bios_data], 80
+	inc	byte [curpos_x-bios_data]
+	inc	byte [crt_curpos_x-bios_data]
+	cmp	byte [curpos_x-bios_data], 80
 	jge	int10_write_char_attrib_newline
 	jmp	int10_write_char_attrib_done
 
     int10_write_char_attrib_newline:
 
-	mov	byte [es:curpos_x-bios_data], 0
-	mov	byte [es:crt_curpos_x-bios_data], 0
-	inc	byte [es:curpos_y-bios_data]
-	inc	byte [es:crt_curpos_y-bios_data]
+	mov	byte [curpos_x-bios_data], 0
+	mov	byte [crt_curpos_x-bios_data], 0
+	inc	byte [curpos_y-bios_data]
+	inc	byte [crt_curpos_y-bios_data]
 
-	cmp	byte [es:curpos_y-bios_data], 25
+	cmp	byte [curpos_y-bios_data], 25
 	jb	int10_write_char_attrib_done
-	mov	byte [es:curpos_y-bios_data], 24
-	mov	byte [es:crt_curpos_y-bios_data], 24
+	mov	byte [curpos_y-bios_data], 24
+	mov	byte [crt_curpos_y-bios_data], 24
 
-	push	cx
-	push	dx
-
-	mov	bl, 1
+	mov	bh, 7
+	mov	al, 1
 	mov	cx, 0
 	mov	dx, 0x184f
 
@@ -1946,14 +1987,12 @@ cpu	8086
 	push	cs
 	call	int10_scroll_up_vmem_update
 
-	pop	dx
-	pop	cx
-
     int10_write_char_attrib_done:
 
-	pop	ax
 	pop	bx
 	pop	bp
+	pop	ax
+	pop	dx
 	pop	cx
 	pop	es
 	pop	ds
@@ -1975,13 +2014,13 @@ cpu	8086
 
 	iret
 
-; int10_features:
-;
-;	; Signify we have CGA display
-;
-;	mov	al, 0x1a
-;	mov	bx, 0x0202
-;	iret
+  int10_features:
+
+	; Signify we have CGA display
+
+	; mov	al, 0x1a
+	; mov	bx, 0x0202
+	; iret
 
 ; ************************* INT 11h - get equipment list
 
@@ -2768,7 +2807,6 @@ int3:
 int4:
 int5:
 int6:
-int9:
 intb:
 intc:
 intd:
@@ -3060,11 +3098,27 @@ clear_screen:
 	mov	cx, 80*25
 	rep	stosw
 
+	cld
+	mov	di, 0xc800
+	mov	es, di
+	mov	di, 0
+	mov	cx, 80*25
+	rep	stosw
+
+	cld
+	mov	di, 0xc000
+	mov	es, di
+	mov	di, 0
+	mov	cx, 80*25
+	rep	stosw
+
 	pop	cx
 	pop	di
 	pop	es
 
 	pop	ax
+
+	mov	byte [cs:vram_dirty], 1
 
 	ret
 
@@ -3168,16 +3222,46 @@ vram_zero_check:			; Check if video memory is blank - if so, do nothing
 
 	sti
 
-	cld
+	mov	bx, 0x40
+	mov	ds, bx
+
+	mov	di, [vmem_offset-bios_data] ; Adjust for CRTC video memory offset register
+	shl	di, 1
+	push	di
+
 	mov	bx, 0xb800
 	mov	es, bx
 	mov	cx, 0x7d0
 	mov	ax, 0x0700
-	mov	di, 0
 
+	cld
 	repz	scasw
-	cmp	cx, 0
-	je	vmem_done		; CX = 0 so nothing has been written to video RAM
+	pop	di
+	je	vmem_done	; Nothing has been written to video RAM - no need to update
+
+	cmp	byte [cs:vram_dirty], 1 ; Cleared screen so always need to update
+	je	vram_update
+
+	mov	bx, 0xc800
+	mov	ds, bx
+	mov	si, 0
+	mov	cx, 0x7d0
+
+	cld
+	repz	cmpsw
+	jne	vram_update		; Video RAM is changed - need to update
+
+	mov	bx, 0x40
+	mov	ds, bx
+	mov	bh, [crt_curpos_y-bios_data]
+	mov	bl, [crt_curpos_x-bios_data]
+	
+	cmp	bh, [cs:crt_curpos_y_last]
+	jne	restore_cursor ; Cursor position changed (but nothing else) so update just that
+	cmp	bl, [cs:crt_curpos_x_last]
+	jne	restore_cursor
+
+	jmp	vmem_done
 
 vram_update:
 
@@ -3199,6 +3283,13 @@ dont_hide_cursor:
 
 	mov	byte [last_attrib], 0xff
 
+	mov	bx, 0x40
+	mov	es, bx
+
+	mov	di, [es:vmem_offset-bios_data] ; Adjust for CRTC video memory offset register
+	shl	di, 1
+	sub	di, 2		; Combined offset
+
 	mov	bx, 0xb800
 	mov	es, bx
 
@@ -3207,7 +3298,6 @@ dont_hide_cursor:
 
 	mov	bp, -1		; Row number
 	mov	si, 79		; Column number
-	mov	di, -2		; Combined offset
 
 disp_loop:
 
@@ -3220,15 +3310,93 @@ disp_loop:
 
 	; Column is 80, so set to 0 and advance a line
 
+loop_next_line:
+
 	mov	si, 0
 	inc	bp
 
 	; Bottom of the screen reached already? If so, we're done
 
 	cmp	bp, 25
-	je	restore_cursor
+	je	restore_attrib
+
+	; See if this line has changed in video RAM
+
+	cmp	byte [cs:vram_dirty], 1
+	je	cont
+
+	push	si
+	push	di
+
+	mov	bx, 0xb800
+	mov	ds, bx
+	mov	bx, 0xc800
+	mov	es, bx
+	mov	si, di
+
+	push	es
+	mov	bx, 0x40
+	mov	es, bx
+	sub	di, [es:vmem_offset-bios_data] ; Adjust for CRTC video memory offset register
+	sub	di, [es:vmem_offset-bios_data]
+	pop	es
+
+	mov	cx, 80 ; One row's worth of characters
+
+	cld
+	repz	cmpsw
+	pop	di
+	pop	si
+
+	je	vmem_next_line ; This line is unchanged in video RAM, so do not update
+
+vmem_copy_buf:
+
+	; Copy the changed line to our double buffer at C800:0
+
+	push	cx
+	push	si
+	push	di
+
+	push	es
+	mov	bx, 0x40
+	mov	es, bx
+	mov	si, di
+	sub	di, [es:vmem_offset-bios_data] ; Adjust for CRTC video memory offset register
+	sub	di, [es:vmem_offset-bios_data]
+	pop	es
+
+	mov	cx, 80 ; One row's worth of characters
+	cld
+	rep	movsw
+
+	pop	di
+	pop	si
+	pop	cx
+
+	; We want to start the update at the first character which differs - so calculate its position.
+
+	mov	bx, 79
+	sub	bx, cx
+
+	add	di, bx
+	add	di, bx
+	add	si, bx
+
+	push	ds
+	pop	es	; Set ES back to B800
+
+	jmp	cont
+
+vmem_next_line:
+
+	add	di, 160
+	jmp	loop_next_line ; Line is unchanged in video RAM
 
 cont:
+	push	cs
+	pop	ds
+
 	cmp	byte [es:di], 0		; Ignore null characters in video memory
 	je	disp_loop
 
@@ -3331,18 +3499,31 @@ just_show_it:
 
 	jmp	disp_loop
 
-restore_cursor:
+restore_attrib:
 
-	mov	bx, 0x40
-	mov	ds, bx
+	mov	al, 0x1B	; Escape
+	extended_putchar_al
+	mov	al, '['		; ANSI
+	extended_putchar_al
+	mov	al, '0'		; Reset attributes
+	extended_putchar_al
+	mov	al, 'm'
+	extended_putchar_al
+
+restore_cursor:
 
 	; On a real PC, the 6845 CRT cursor position registers take place over the BIOS
 	; Data Area ones. So, if the cursor is not off the screen, set it to the CRT
 	; position.
 
+	mov	bx, 0x40
+	mov	ds, bx
+
 	mov	bh, [crt_curpos_y-bios_data]
 	mov	bl, [crt_curpos_x-bios_data]
-	
+	mov	[cs:crt_curpos_y_last], bh
+	mov	[cs:crt_curpos_x_last], bl
+		
 	cmp	bh, 24
 	ja	vmem_end_hidden_cursor
 	cmp	bl, 79
@@ -3363,29 +3544,21 @@ restore_cursor:
 	mov	al, 'H'		; Set cursor position command
 	extended_putchar_al
 
+restore_cursor_visible:
+
 	cmp	byte [cursor_visible-bios_data], 1
 	jne	vmem_end_hidden_cursor
 
 	call	ansi_show_cursor
-	jmp	skip_restore_cursor
+	jmp	vmem_done
 
 vmem_end_hidden_cursor:
 
 	call	ansi_hide_cursor
 
-skip_restore_cursor:
-
-	mov	al, 0x1B	; Escape
-	extended_putchar_al
-	mov	al, '['		; ANSI
-	extended_putchar_al
-	mov	al, '0'		; Reset attributes
-	extended_putchar_al
-	mov	al, 'm'
-	extended_putchar_al
-
 vmem_done:
 
+	mov	byte [cs:vram_dirty], 0
 	mov	byte [cs:in_update], 0
 	ret
 
@@ -3443,7 +3616,8 @@ lpt1addr	dw	0
 lpt2addr	dw	0
 lpt3addr	dw	0
 lpt4addr	dw	0
-equip		dw	0b0000000100100001
+equip		dw	0b0000000000100001
+;equip		dw	0b0000000100100001
 		db	0
 memsize		dw	0x280
 		db	0
@@ -3524,6 +3698,7 @@ this_keystroke_ext		db	0
 timer0_freq	dw	0xffff ; PIT channel 0 (55ms)
 timer2_freq	dw	0      ; PIT channel 2
 cga_vmode	db	0
+vmem_offset	dw	0      ; Video RAM offset
 ending:		times (0xff-($-com1addr)) db	0
 
 ; Keyboard scan code tables
@@ -3617,9 +3792,12 @@ pgup_pgdn_xlt	db	0x47, 0x4f, 0x49, 0x51
 
 int8_ctr	db	0
 in_update	db	0
+vram_dirty	db	0
 last_attrib	db	0
 int_curpos_x	db	0
 int_curpos_y	db	0
+crt_curpos_x_last	db	0
+crt_curpos_y_last	db	0
 
 ; INT 8 millisecond counter
 
@@ -3641,13 +3819,12 @@ rm_mode12_dfseg	db	11, 11, 10, 10, 11, 11, 10, 11
 
 ; Opcode decode tables
 
-xlat_ids	db	0, 1, 2, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7, 7, 7, 7, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 47, 17, 17, 18, 19, 20, 19, 21, 22, 21, 22, 23, 53, 24, 25, 26, 25, 25, 26, 25, 26, 27, 28, 27, 28, 27, 29, 27, 29, 48, 30, 31, 32, 53, 33, 34, 35, 36, 37, 37, 38, 39, 40, 19, 41, 42, 43, 44, 53, 53, 45, 46, 46, 46, 46, 46, 46, 52, 52, 12
-i_opcodes	db	17, 17, 17, 17, 8, 8, 49, 50, 18, 18, 18, 18, 9, 9, 51, 64, 19, 19, 19, 19, 10, 10, 52, 53, 20, 20, 20, 20, 11, 11, 54, 55, 21, 21, 21, 21, 12, 12, 56, 57, 22, 22, 22, 22, 13, 13, 58, 59, 23, 23, 23, 23, 14, 14, 60, 61, 24, 24, 24, 24, 15, 15, 62, 63, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 93, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 31, 31, 48, 48, 25, 25, 25, 25, 26, 26, 26, 26, 32, 32, 32, 32, 32, 32, 32, 32, 65, 66, 67, 68, 69, 70, 71, 72, 27, 27, 27, 27, 33, 33, 34, 34, 35, 35, 36, 36, 37, 37, 38, 38, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 94, 94, 39, 39, 73, 74, 40, 40, 0, 0, 41, 41, 75, 76, 77, 78, 28, 28, 28, 28, 79, 80, 81, 82, 47, 47, 47, 47, 47, 47, 47, 47, 29, 29, 29, 29, 42, 42, 43, 43, 30, 30, 30, 30, 44, 44, 45, 45, 83, 0, 46, 46, 84, 85, 7, 7, 86, 87, 88, 89, 90, 91, 6, 6
-ex_data  	db	21, 0, 0, 1, 0, 0, 0, 21, 0, 1, 2, 3, 4, 5, 6, 7, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 0, 0, 43, 0, 0, 0, 0, 0, 0, 1, 2, 1, 0, 0, 1, 0, 0, 1, 1, 0, 3, 0, 8, 8, 9, 10, 10, 11, 11, 8, 0, 9, 1, 10, 2, 11, 0, 36, 0, 0, 0, 0, 0, 0, 255, 0, 16, 22, 0, 255, 48, 2, 255, 255, 40, 11, 1, 2, 40, 80, 81, 92, 93, 94, 95, 0, 21, 1
-std_flags	db	0, 0, 1, 1, 0, 0, 0, 0, 3, 5, 1, 1, 5, 3, 5, 3, 1, 3, 5, 1, 1, 5, 3, 5, 3, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0
-base_size	db	2, 1, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 2, 2, 0, 2, 1, 1, 1, 1, 1, 1, 1, 0, 2, 0, 2, 2, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 0, 1, 1, 1, 1, 1, 2, 2, 0, 0, 0, 0, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3
-i_w_adder	db	0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-i_mod_adder	db	0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+xlat_ids	db	9, 9, 9, 9, 7, 7, 25, 26, 9, 9, 9, 9, 7, 7, 25, 48, 9, 9, 9, 9, 7, 7, 25, 26, 9, 9, 9, 9, 7, 7, 25, 26, 9, 9, 9, 9, 7, 7, 27, 28, 9, 9, 9, 9, 7, 7, 27, 28, 9, 9, 9, 9, 7, 7, 27, 29, 9, 9, 9, 9, 7, 7, 27, 29, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 51, 54, 52, 52, 52, 52, 52, 52, 55, 55, 55, 55, 52, 52, 52, 52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 8, 8, 8, 15, 15, 24, 24, 9, 9, 9, 9, 10, 10, 10, 10, 16, 16, 16, 16, 16, 16, 16, 16, 30, 31, 32, 53, 33, 34, 35, 36, 11, 11, 11, 11, 17, 17, 18, 18, 47, 47, 17, 17, 17, 17, 18, 18, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 12, 12, 19, 19, 37, 37, 20, 20, 49, 50, 19, 19, 38, 39, 40, 19, 12, 12, 12, 12, 41, 42, 43, 44, 53, 53, 53, 53, 53, 53, 53, 53, 13, 13, 13, 13, 21, 21, 22, 22, 14, 14, 14, 14, 21, 21, 22, 22, 53, 0, 23, 23, 53, 45, 6, 6, 46, 46, 46, 46, 46, 46, 5, 5
+ex_data  	db	0, 0, 0, 0, 0, 0, 8, 8, 1, 1, 1, 1, 1, 1, 9, 36, 2, 2, 2, 2, 2, 2, 10, 10, 3, 3, 3, 3, 3, 3, 11, 11, 4, 4, 4, 4, 4, 4, 8, 0, 5, 5, 5, 5, 5, 5, 9, 1, 6, 6, 6, 6, 6, 6, 10, 2, 7, 7, 7, 7, 7, 7, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 21, 21, 21, 21, 21, 0, 0, 0, 0, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 21, 0, 0, 0, 0, 0, 0, 0, 0, 8, 8, 8, 8, 12, 12, 12, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 16, 22, 0, 0, 0, 0, 1, 1, 0, 255, 48, 2, 0, 0, 0, 0, 255, 255, 40, 11, 3, 3, 3, 3, 3, 3, 3, 3, 43, 43, 43, 43, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 21, 0, 0, 2, 40, 21, 21, 80, 81, 92, 93, 94, 95, 0, 0
+std_flags	db	3, 3, 3, 3, 3, 3, 0, 0, 5, 5, 5, 5, 5, 5, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 5, 5, 5, 5, 5, 5, 0, 1, 3, 3, 3, 3, 3, 3, 0, 1, 5, 5, 5, 5, 5, 5, 0, 1, 3, 3, 3, 3, 3, 3, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+base_size	db	2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 3, 3, 3, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 0, 0, 2, 2, 2, 2, 4, 1, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2
+i_w_adder	db	0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+i_mod_adder	db	1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1
 
 flags_mult	db	0, 2, 4, 6, 7, 8, 9, 10, 11
 

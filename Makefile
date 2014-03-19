@@ -1,5 +1,5 @@
 # 8086tiny: a tiny, highly functional, highly portable PC emulator/VM
-# Copyright 2013, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
+# Copyright 2013-14, Adrian Cable (adrian.cable@gmail.com) - http://www.megalith.co.uk/8086tiny
 #
 # This work is licensed under the MIT License. See included LICENSE.TXT.
 
@@ -10,7 +10,7 @@
 OPTS_ALL=-O3 -fsigned-char -std=c99
 OPTS_SDL=`sdl-config --cflags --libs`
 OPTS_NOGFX=-DNO_GRAPHICS
-OPTS_SLOWCPU=-DGRAPHICS_UPDATE_DELAY=50000
+OPTS_SLOWCPU=-DGRAPHICS_UPDATE_DELAY=25000
 
 8086tiny: 8086tiny.c
 	${CC} 8086tiny.c ${OPTS_SDL} ${OPTS_ALL} -o 8086tiny
