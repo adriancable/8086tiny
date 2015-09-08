@@ -24,5 +24,8 @@ no_graphics: 8086tiny.c
 	${CC} 8086tiny.c ${OPTS_NOGFX} ${OPTS_ALL} -o 8086tiny
 	strip 8086tiny
 
+bios:
+	nasm -f bin bios_source/bios.asm -o bios
+
 clean:
-	rm 8086tiny
+	rm 8086tiny bios
